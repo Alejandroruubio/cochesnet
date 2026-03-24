@@ -34,6 +34,19 @@ from scraper import BODY_TYPES, FUEL_TYPES, SORT_OPTIONS, TRANSMISSIONS, CochesN
 
 logging.basicConfig(level=logging.INFO)
 
+
+# ── Instalar browser de Playwright una sola vez (Streamlit Cloud) ──────────
+@st.cache_resource(show_spinner="Preparando navegador…")
+def _install_playwright_browser():
+    import subprocess, sys
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+    )
+    return True
+
+_install_playwright_browser()
+
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="CochesNet Pro",
