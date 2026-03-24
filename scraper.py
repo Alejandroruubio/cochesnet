@@ -212,8 +212,10 @@ class CochesNetScraper:
             params["transmissionTypeId"] = filters["transmission_id"]
         if filters.get("has_warranty"):
             params["hasWarranty"] = "true"
-        if filters.get("seller_type") and filters["seller_type"] not in ("todos", ""):
-            params["dealerType"] = filters["seller_type"]
+        seller = filters.get("seller_type", "")
+        if seller and seller not in ("todos", ""):
+            # coches.net accepts dealerType=particular | profesional
+            params["dealerType"] = seller
         if filters.get("sort"):
             params["sortBy"] = filters["sort"]
 
@@ -257,7 +259,7 @@ class CochesNetScraper:
             "provincia": location.get("mainProvince", ""),
             "vendedor": seller.get("name", ""),
             "telefono": car.get("phone", ""),
-            "vendedor_profesional": car.get("isProfessional", ""),
+            "vendedor_profesional": bool(car.get("isProfessional", False)),
             "valoracion_vendedor": (seller.get("ratings") or {}).get("average", ""),
             "num_fotos": len(car.get("photos") or []),
             "fecha_publicacion": car.get("publicationDate", ""),
