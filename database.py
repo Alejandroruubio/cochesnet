@@ -19,7 +19,8 @@ DB_PATH = Path(__file__).parent / "cochesnet.db"
 
 CRM_COLUMNS = [
     "id", "nombre", "telefono", "email",
-    "url_anuncio", "titulo_vehiculo", "precio", "estado",
+    "url_anuncio", "titulo_vehiculo", "precio",
+    "tipo_vendedor", "estado",
     "fecha_contacto", "fecha_seguimiento", "notas", "created_at",
 ]
 
@@ -27,6 +28,8 @@ CRM_ESTADOS = [
     "Pendiente", "Contactado", "En negociación",
     "Interesado", "Descartado", "Comprado",
 ]
+
+CRM_TIPOS_VENDEDOR = ["Desconocido", "Particular", "Profesional"]
 
 
 # ── Connection ─────────────────────────────────────────────────────────────
@@ -68,6 +71,7 @@ def init_db():
                 url_anuncio       TEXT DEFAULT '',
                 titulo_vehiculo   TEXT DEFAULT '',
                 precio            TEXT DEFAULT '',
+                tipo_vendedor     TEXT DEFAULT 'Desconocido',
                 estado            TEXT DEFAULT 'Pendiente',
                 fecha_contacto    TEXT DEFAULT '',
                 fecha_seguimiento TEXT DEFAULT '',
@@ -76,6 +80,11 @@ def init_db():
                 updated_at        TEXT DEFAULT (datetime('now'))
             );
         """)
+        # Migration for existing databases that predate tipo_vendedor
+        try:
+            c.execute("ALTER TABLE crm_contacts ADD COLUMN tipo_vendedor TEXT DEFAULT 'Desconocido'")
+        except Exception:
+            pass  # Column already exists
 
 
 # ── History ───────────────────────────────────────────────────────────────
@@ -141,7 +150,7 @@ def get_crm() -> pd.DataFrame:
     with _conn() as c:
         rows = c.execute(
             "SELECT id, nombre, telefono, email, url_anuncio, titulo_vehiculo, "
-            "precio, estado, fecha_contacto, fecha_seguimiento, notas, created_at "
+            "precio, tipo_vendedor, estado, fecha_contacto, fecha_seguimiento, notas, created_at "
             "FROM crm_contacts ORDER BY id"
         ).fetchall()
     if not rows:
@@ -167,9 +176,9 @@ def save_crm(df: pd.DataFrame):
             c.execute(
                 f"""INSERT INTO crm_contacts
                    (id, nombre, telefono, email, url_anuncio, titulo_vehiculo,
-                    precio, estado, fecha_contacto, fecha_seguimiento, notas,
+                    precio, tipo_vendedor, estado, fecha_contacto, fecha_seguimiento, notas,
                     created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,{created_sql},datetime('now'))""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,{created_sql},datetime('now'))""",
                 (
                     row_id,
                     str(row.get("nombre") or ""),
@@ -178,6 +187,7 @@ def save_crm(df: pd.DataFrame):
                     str(row.get("url_anuncio") or ""),
                     str(row.get("titulo_vehiculo") or ""),
                     str(row.get("precio") or ""),
+                    str(row.get("tipo_vendedor") or "Desconocido"),
                     str(row.get("estado") or "Pendiente"),
                     str(row.get("fecha_contacto") or ""),
                     str(row.get("fecha_seguimiento") or ""),
@@ -187,15 +197,18 @@ def save_crm(df: pd.DataFrame):
 
 
 def add_crm_from_car(car: dict) -> int:
+    is_pro = car.get("vendedor_profesional", False)
+    tipo_vendedor = "Profesional" if is_pro else "Particular"
     with _conn() as c:
         cur = c.execute(
-            "INSERT INTO crm_contacts (titulo_vehiculo, url_anuncio, precio, telefono) "
-            "VALUES (?,?,?,?)",
+            "INSERT INTO crm_contacts (titulo_vehiculo, url_anuncio, precio, telefono, tipo_vendedor) "
+            "VALUES (?,?,?,?,?)",
             (
                 str(car.get("titulo", "")),
                 str(car.get("url", "")),
                 str(car.get("precio_€", "")),
                 str(car.get("telefono", "")),
+                tipo_vendedor,
             ),
         )
         return cur.lastrowid

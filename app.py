@@ -14,6 +14,7 @@ import streamlit as st
 
 from database import (
     CRM_ESTADOS,
+    CRM_TIPOS_VENDEDOR,
     add_crm_from_car,
     cleanup_old_scrapes,
     count_crm,
@@ -542,11 +543,19 @@ with tab_crm:
     crm_df = get_crm()
     n_rows = len(crm_df)
 
+    # ── Filters ───────────────────────────────────────────────────────────
+    fc1, fc2, fc3 = st.columns(3)
+    f_nombre = fc1.text_input("🔎 Buscar nombre / vehículo", key="crm_f_nombre",
+                               placeholder="ej: García, Golf…")
+    f_estado = fc2.multiselect("Estado", CRM_ESTADOS, key="crm_f_estado",
+                                placeholder="Todos los estados")
+    f_tipo   = fc3.selectbox("Tipo vendedor", ["Todos"] + CRM_TIPOS_VENDEDOR, key="crm_f_tipo")
+
     # ── Toolbar ───────────────────────────────────────────────────────────
     ta, tb, tc, td, te = st.columns([1.1, 1.1, 1.1, 1.1, 1])
 
-    add_btn    = ta.button("➕ Nuevo", use_container_width=True)
-    save_btn   = tb.button("💾 Guardar", type="primary", use_container_width=True)
+    add_btn    = ta.button("➕ Nuevo",           use_container_width=True)
+    save_btn   = tb.button("💾 Guardar",          type="primary", use_container_width=True)
     del_btn    = tc.button("🗑️ Borrar marcadas", use_container_width=True)
     selall_btn = td.button("☑️ Seleccionar todo", use_container_width=True)
 
@@ -556,47 +565,74 @@ with tab_crm:
         rng_from = r1.number_input("De fila", 1, max(n_rows, 1), 1, key="rng_from")
         rng_to   = r2.number_input("A fila",  1, max(n_rows, 1), max(n_rows, 1), key="rng_to")
         if st.button("Marcar rango", use_container_width=True, key="sel_range_btn"):
+            st.session_state.pop("crm_editor", None)
             st.session_state["crm_range"] = (int(rng_from) - 1, int(rng_to))
+            st.rerun()
 
-    # Construir df para edición
+    # ── Añadir fila nueva ─────────────────────────────────────────────────
     if add_btn:
         new_row = pd.DataFrame([{
             "id": None, "nombre": "", "telefono": "", "email": "",
             "url_anuncio": "", "titulo_vehiculo": "", "precio": "",
-            "estado": "Pendiente", "fecha_contacto": "", "fecha_seguimiento": "",
+            "tipo_vendedor": "Desconocido", "estado": "Pendiente",
+            "fecha_contacto": "", "fecha_seguimiento": "",
             "notas": "", "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }])
         crm_df = pd.concat([crm_df, new_row], ignore_index=True)
         st.session_state["crm_draft"] = crm_df
 
     edit_source = st.session_state.get("crm_draft", crm_df)
-    edit_with_del = edit_source.copy()
+
+    # ── Aplicar filtros — separa visibles de ocultos ───────────────────────
+    full_df = edit_source.copy()
+    fmask   = pd.Series(True, index=full_df.index)
+    if f_nombre.strip():
+        fmask &= (
+            full_df["nombre"].astype(str).str.contains(f_nombre.strip(), case=False, na=False)
+            | full_df["titulo_vehiculo"].astype(str).str.contains(f_nombre.strip(), case=False, na=False)
+        )
+    if f_estado:
+        fmask &= full_df["estado"].isin(f_estado)
+    if f_tipo != "Todos" and "tipo_vendedor" in full_df.columns:
+        fmask &= full_df["tipo_vendedor"] == f_tipo
+
+    hidden_df  = full_df[~fmask].drop(columns=["_borrar"], errors="ignore").copy()
+    visible_df = full_df[fmask].copy()
+
+    edit_with_del = visible_df.drop(columns=["_borrar"], errors="ignore").copy()
     edit_with_del.insert(0, "_borrar", False)
 
-    # Seleccionar todo
+    # ── Seleccionar todo: limpiar caché del editor y relanzar ─────────────
     if selall_btn:
-        edit_with_del["_borrar"] = True
-        st.session_state["crm_draft"] = edit_with_del.drop(columns=["_borrar"])
+        st.session_state.pop("crm_editor", None)
         st.session_state["crm_sel_all"] = True
+        st.rerun()
 
-    # Marcar rango
+    # Marcar rango (tras rerun, el editor ya no tiene caché)
     rng = st.session_state.pop("crm_range", None)
     if rng:
         lo, hi = rng
         edit_with_del["_borrar"] = False
-        edit_with_del.loc[lo:hi - 1, "_borrar"] = True
+        edit_with_del.loc[edit_with_del.index[lo:hi], "_borrar"] = True
 
-    # Override _borrar if select-all was pressed
+    # Aplicar seleccionar-todo (tras rerun con editor limpio)
     if st.session_state.pop("crm_sel_all", False):
         edit_with_del["_borrar"] = True
 
-    # ── Tabla editable ────────────────────────────────────────────────────
-    st.caption(
-        "💡 Marca ☑ la columna **Borrar** en las filas que quieras eliminar. "
-        "En la tabla puedes mantener **Shift** para seleccionar texto en celdas múltiples. "
-        "Usa el botón **Seleccionar todo** o **Rango** para marcar varias filas de golpe."
-    )
+    # ── Caption ───────────────────────────────────────────────────────────
+    is_filtered = int(fmask.sum()) < len(full_df)
+    if is_filtered:
+        st.caption(
+            f"Mostrando {int(fmask.sum()):,} de {len(full_df):,} contactos (filtro activo). "
+            "Guardar/Borrar solo afecta a los contactos visibles."
+        )
+    else:
+        st.caption(
+            "💡 Marca ☑ la columna **Borrar** en las filas a eliminar. "
+            "Usa **Seleccionar todo** o **Rango** para marcar varias de golpe."
+        )
 
+    # ── Tabla editable ────────────────────────────────────────────────────
     edited = st.data_editor(
         edit_with_del,
         use_container_width=True,
@@ -611,13 +647,14 @@ with tab_crm:
             "url_anuncio":       st.column_config.LinkColumn("Anuncio", display_text="Ver 🔗", width="small"),
             "titulo_vehiculo":   st.column_config.TextColumn("Vehículo", width="large"),
             "precio":            st.column_config.TextColumn("Precio", width="small"),
+            "tipo_vendedor":     st.column_config.SelectboxColumn("Tipo vendedor", options=CRM_TIPOS_VENDEDOR, width="medium"),
             "estado":            st.column_config.SelectboxColumn("Estado", options=CRM_ESTADOS, width="medium"),
             "fecha_contacto":    st.column_config.TextColumn("Contactado", width="medium"),
             "fecha_seguimiento": st.column_config.TextColumn("Seguimiento", width="medium"),
             "notas":             st.column_config.TextColumn("Notas", width="large"),
             "created_at":        st.column_config.TextColumn("Creado", disabled=True, width="medium"),
         },
-        column_order=["_borrar", "id", "nombre", "estado", "telefono", "email",
+        column_order=["_borrar", "id", "nombre", "tipo_vendedor", "estado", "telefono", "email",
                       "titulo_vehiculo", "precio", "url_anuncio",
                       "fecha_contacto", "fecha_seguimiento", "notas", "created_at"],
         hide_index=True,
@@ -625,19 +662,21 @@ with tab_crm:
     )
 
     if save_btn:
-        clean = edited.drop(columns=["_borrar"], errors="ignore")
-        save_crm(clean)
+        edited_clean  = edited.drop(columns=["_borrar"], errors="ignore")
+        full_to_save  = pd.concat([hidden_df, edited_clean], ignore_index=True)
+        save_crm(full_to_save)
         st.session_state.pop("crm_draft", None)
         st.success("✅ CRM guardado.")
         st.rerun()
 
     if del_btn:
-        to_keep  = edited[~edited["_borrar"]].drop(columns=["_borrar"], errors="ignore")
-        n_del    = len(edited) - len(to_keep)
+        to_keep_vis = edited[~edited["_borrar"]].drop(columns=["_borrar"], errors="ignore")
+        n_del       = len(edited) - len(to_keep_vis)
         if n_del == 0:
             st.warning("No hay filas marcadas para borrar.")
         else:
-            save_crm(to_keep)
+            full_to_save = pd.concat([hidden_df, to_keep_vis], ignore_index=True)
+            save_crm(full_to_save)
             st.session_state.pop("crm_draft", None)
             st.success(f"✅ {n_del} fila(s) eliminada(s).")
             st.rerun()
