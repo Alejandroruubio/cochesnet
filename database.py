@@ -52,6 +52,14 @@ def init_db():
                 created_at  TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS notes (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                title      TEXT DEFAULT 'Sin título',
+                content    TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS crm_contacts (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre            TEXT DEFAULT '',
@@ -196,3 +204,39 @@ def add_crm_from_car(car: dict) -> int:
 def count_crm() -> int:
     with _conn() as c:
         return c.execute("SELECT COUNT(*) FROM crm_contacts").fetchone()[0]
+
+
+# ── Notes ─────────────────────────────────────────────────────────────────
+
+def list_notes() -> list:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, title, updated_at FROM notes ORDER BY updated_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_note(note_id: int) -> Optional[dict]:
+    with _conn() as c:
+        row = c.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def save_note(note_id: Optional[int], title: str, content: str) -> int:
+    with _conn() as c:
+        if note_id:
+            c.execute(
+                "UPDATE notes SET title=?, content=?, updated_at=datetime('now') WHERE id=?",
+                (title, content, note_id),
+            )
+            return note_id
+        else:
+            cur = c.execute(
+                "INSERT INTO notes (title, content) VALUES (?,?)", (title, content)
+            )
+            return cur.lastrowid
+
+
+def delete_note(note_id: int):
+    with _conn() as c:
+        c.execute("DELETE FROM notes WHERE id = ?", (note_id,))
