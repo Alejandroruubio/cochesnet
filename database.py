@@ -1,12 +1,15 @@
 """
 database.py — SQLite persistence for scrape history and CRM contacts.
 """
+from __future__ import annotations
+
 import gzip
 import logging
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -17,7 +20,7 @@ DB_PATH = Path(__file__).parent / "cochesnet.db"
 CRM_COLUMNS = [
     "id", "nombre", "telefono", "email",
     "url_anuncio", "titulo_vehiculo", "precio", "estado",
-    "fecha_contacto", "fecha_seguimiento", "notas",
+    "fecha_contacto", "fecha_seguimiento", "notas", "created_at",
 ]
 
 CRM_ESTADOS = [
@@ -97,7 +100,7 @@ def save_scrape(filters_txt: str, df: pd.DataFrame) -> int:
         return cur.lastrowid
 
 
-def list_scrapes() -> list[dict]:
+def list_scrapes() -> list:
     with _conn() as c:
         rows = c.execute(
             "SELECT id, timestamp, filters_txt, num_results "
@@ -106,7 +109,7 @@ def list_scrapes() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def load_scrape(scrape_id: int) -> pd.DataFrame | None:
+def load_scrape(scrape_id: int) -> Optional[pd.DataFrame]:
     with _conn() as c:
         row = c.execute(
             "SELECT results_gz FROM scrape_history WHERE id = ?", (scrape_id,)
@@ -130,7 +133,7 @@ def get_crm() -> pd.DataFrame:
     with _conn() as c:
         rows = c.execute(
             "SELECT id, nombre, telefono, email, url_anuncio, titulo_vehiculo, "
-            "precio, estado, fecha_contacto, fecha_seguimiento, notas "
+            "precio, estado, fecha_contacto, fecha_seguimiento, notas, created_at "
             "FROM crm_contacts ORDER BY id"
         ).fetchall()
     if not rows:
@@ -139,7 +142,7 @@ def get_crm() -> pd.DataFrame:
 
 
 def save_crm(df: pd.DataFrame):
-    """Replace all CRM contacts with the current DataFrame."""
+    """Replace all CRM contacts with the current DataFrame (preserving created_at)."""
     with _conn() as c:
         c.execute("DELETE FROM crm_contacts")
         for _, row in df.iterrows():
@@ -149,12 +152,16 @@ def save_crm(df: pd.DataFrame):
             except (ValueError, TypeError):
                 row_id = None
 
+            # Preserve original created_at if present, else now()
+            created_at = str(row.get("created_at") or "")
+            created_sql = f"'{created_at}'" if created_at and created_at != "nan" else "datetime('now')"
+
             c.execute(
-                """INSERT INTO crm_contacts
+                f"""INSERT INTO crm_contacts
                    (id, nombre, telefono, email, url_anuncio, titulo_vehiculo,
                     precio, estado, fecha_contacto, fecha_seguimiento, notas,
-                    updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
+                    created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,{created_sql},datetime('now'))""",
                 (
                     row_id,
                     str(row.get("nombre") or ""),

@@ -1,13 +1,17 @@
 """
 app.py — CochesNet Pro
-Scraper + Historial persistente + CRM de contactos.
+Scraper · Historial · CRM
 """
+from __future__ import annotations
+
 import io
 import logging
 from datetime import datetime
 
+import bcrypt
 import pandas as pd
 import streamlit as st
+import streamlit_authenticator as stauth
 
 from database import (
     CRM_ESTADOS,
@@ -35,106 +39,178 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────
-st.markdown(
-    """
+# ══════════════════════════════════════════════════════════════════════════
+# CSS — diseño completo
+# ══════════════════════════════════════════════════════════════════════════
+st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
-
-/* ── Hide default Streamlit chrome ── */
-#MainMenu, footer, header { visibility: hidden; }
-.block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
-
-/* ── Background ── */
-.stApp { background: #F0F4F8; }
-
-/* ── Sidebar ── */
-section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0F2544 0%, #1B3A6B 100%);
-    border-right: none;
+/* ── Reset & base ── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif !important; }
+#MainMenu, footer { display: none !important; }
+header[data-testid="stHeader"] { display: none !important; }
+.block-container {
+    padding: 1.8rem 2.5rem 3rem !important;
+    max-width: 1400px !important;
 }
-section[data-testid="stSidebar"] .stMarkdown,
-section[data-testid="stSidebar"] label,
+
+/* ── App background ── */
+.stApp { background: #F1F5F9 !important; }
+
+/* ══════════════════════════
+   SIDEBAR
+══════════════════════════ */
+section[data-testid="stSidebar"] {
+    background: #1E293B !important;
+}
+section[data-testid="stSidebar"] > div:first-child {
+    padding-top: 1.5rem;
+}
+/* Todos los textos del sidebar en claro */
 section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] span:not(.st-emotion-cache-10trblm),
-section[data-testid="stSidebar"] .stSelectbox label,
-section[data-testid="stSidebar"] .stMultiSelect label,
-section[data-testid="stSidebar"] .stNumberInput label,
-section[data-testid="stSidebar"] .stSlider label {
-    color: #CBD5E1 !important;
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] div,
+section[data-testid="stSidebar"] small,
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] .stCaption,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+    color: #94A3B8 !important;
 }
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
-section[data-testid="stSidebar"] h3 {
-    color: #FFFFFF !important;
-    font-weight: 700 !important;
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] strong,
+section[data-testid="stSidebar"] b {
+    color: #F1F5F9 !important;
 }
+/* Expanders del sidebar */
 section[data-testid="stSidebar"] [data-testid="stExpander"] {
-    background: rgba(255,255,255,0.07) !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
     border-radius: 10px !important;
     margin-bottom: 6px !important;
 }
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary span {
+    color: #CBD5E1 !important;
+    font-weight: 500 !important;
+}
 section[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.12) !important;
+    margin: 1rem 0 !important;
+}
+/* Inputs en sidebar — fondo oscuro con texto claro */
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea,
+section[data-testid="stSidebar"] [data-baseweb="select"] > div {
+    background: rgba(255,255,255,0.08) !important;
+    color: #F1F5F9 !important;
     border-color: rgba(255,255,255,0.15) !important;
 }
-section[data-testid="stSidebar"] .stCaption {
+section[data-testid="stSidebar"] [data-baseweb="select"] [data-baseweb="tag"] span {
+    color: #1E293B !important;
+}
+/* Métricas del sidebar */
+section[data-testid="stSidebar"] [data-testid="metric-container"] {
+    background: rgba(255,255,255,0.08) !important;
+    border: 1px solid rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+    padding: 0.8rem 1rem !important;
+}
+section[data-testid="stSidebar"] [data-testid="metric-container"] * {
+    color: #F1F5F9 !important;
+}
+section[data-testid="stSidebar"] [data-testid="metric-container"] [data-testid="stMetricLabel"] * {
     color: #94A3B8 !important;
+    font-size: 0.72rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
-/* ── Header card ── */
-.app-header {
-    background: linear-gradient(135deg, #E8420F 0%, #C0320A 100%);
-    border-radius: 14px;
-    padding: 1.2rem 2rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    box-shadow: 0 4px 20px rgba(232,66,15,0.35);
-}
-.app-header h1 { color: white; margin: 0; font-size: 1.6rem; font-weight: 800; }
-.app-header p  { color: rgba(255,255,255,0.85); margin: 0; font-size: 0.85rem; }
-.header-user   { color: rgba(255,255,255,0.9); font-size: 0.9rem; text-align: right; }
+/* ══════════════════════════
+   ÁREA PRINCIPAL
+══════════════════════════ */
 
-/* ── Metric cards ── */
+/* Métricas de resultados */
 [data-testid="metric-container"] {
     background: white !important;
-    border-radius: 12px !important;
+    border-radius: 14px !important;
     padding: 1.2rem 1.5rem !important;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.07) !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.05) !important;
     border: 1px solid #E2E8F0 !important;
 }
 [data-testid="metric-container"] [data-testid="stMetricValue"] {
-    font-size: 1.7rem !important;
+    font-size: 1.9rem !important;
     font-weight: 700 !important;
-    color: #0F2544 !important;
+    color: #0F172A !important;
 }
 [data-testid="metric-container"] [data-testid="stMetricLabel"] {
     color: #64748B !important;
-    font-size: 0.78rem !important;
-    font-weight: 500 !important;
+    font-size: 0.72rem !important;
+    font-weight: 600 !important;
     text-transform: uppercase;
     letter-spacing: 0.06em;
 }
 
-/* ── Buttons ── */
-.stButton > button {
-    border-radius: 8px !important;
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 2px;
+    background: transparent !important;
+    border-bottom: 2px solid #E2E8F0;
+    padding-bottom: 0 !important;
+    margin-bottom: 0 !important;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px 8px 0 0 !important;
+    padding: 0.65rem 1.6rem !important;
     font-weight: 600 !important;
-    transition: all 0.2s ease !important;
+    font-size: 0.9rem !important;
+    color: #64748B !important;
+    background: #E8EEF5 !important;
+    border: 1px solid #E2E8F0 !important;
+    border-bottom: none !important;
+    margin-bottom: -2px !important;
+    transition: all 0.15s ease !important;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    background: #F8FAFC !important;
+    color: #334155 !important;
+}
+.stTabs [aria-selected="true"] {
+    background: white !important;
+    color: #E8420F !important;
+    border-color: #E2E8F0 !important;
+    border-bottom: 2px solid white !important;
+}
+.stTabs [data-baseweb="tab-panel"] {
+    background: white !important;
+    border-radius: 0 12px 12px 12px !important;
+    padding: 2rem !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+    border: 1px solid #E2E8F0 !important;
+    border-top: none !important;
+}
+
+/* ── Botones ── */
+.stButton > button {
+    border-radius: 9px !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    transition: all 0.18s ease !important;
+    height: 2.5rem !important;
 }
 .stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #E8420F, #C0320A) !important;
+    background: linear-gradient(135deg, #E8420F 0%, #C03008 100%) !important;
     border: none !important;
     color: white !important;
-    box-shadow: 0 2px 10px rgba(232,66,15,0.3) !important;
+    box-shadow: 0 2px 8px rgba(232,66,15,0.35) !important;
 }
 .stButton > button[kind="primary"]:hover {
     transform: translateY(-1px) !important;
-    box-shadow: 0 4px 18px rgba(232,66,15,0.45) !important;
+    box-shadow: 0 5px 18px rgba(232,66,15,0.4) !important;
 }
 .stButton > button[kind="secondary"] {
     background: white !important;
@@ -144,158 +220,128 @@ section[data-testid="stSidebar"] .stCaption {
 .stButton > button[kind="secondary"]:hover {
     border-color: #E8420F !important;
     color: #E8420F !important;
-    background: #FFF5F2 !important;
 }
 
-/* ── Tabs ── */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 4px;
-    background: transparent;
-    border-bottom: 2px solid #E2E8F0;
-    padding-bottom: 0;
-}
-.stTabs [data-baseweb="tab"] {
-    border-radius: 8px 8px 0 0 !important;
-    padding: 0.6rem 1.5rem !important;
-    font-weight: 600 !important;
-    color: #64748B !important;
-    background: transparent !important;
-    border: none !important;
-}
-.stTabs [aria-selected="true"] {
-    background: white !important;
-    color: #E8420F !important;
-    border-bottom: 3px solid #E8420F !important;
-}
-.stTabs [data-baseweb="tab-panel"] {
-    background: white;
-    border-radius: 0 12px 12px 12px;
-    padding: 1.5rem !important;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-    border: 1px solid #E2E8F0;
-}
-
-/* ── Filter box ── */
-.filter-box {
-    background: #F8FAFC;
-    border: 1px solid #E2E8F0;
-    border-radius: 12px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1rem;
-}
-
-/* ── History rows ── */
-.history-row {
-    background: white;
-    border: 1px solid #E2E8F0;
-    border-radius: 10px;
-    padding: 0.9rem 1.2rem;
-    margin-bottom: 0.5rem;
-    display: flex;
-    align-items: center;
-    transition: box-shadow 0.2s;
-}
-.history-row:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-
-/* ── Login page ── */
-.login-wrapper {
-    min-height: 75vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.login-card {
-    background: white;
-    border-radius: 20px;
-    padding: 3rem;
-    width: 100%;
-    max-width: 420px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.12);
-    text-align: center;
-}
-.login-card h2 { color: #0F2544; font-size: 1.6rem; font-weight: 800; margin-bottom: 0.3rem; }
-.login-card p  { color: #94A3B8; font-size: 0.88rem; margin-bottom: 1.5rem; }
-.login-logo    { font-size: 3rem; margin-bottom: 1rem; }
-
-/* ── Info / success / warning pills ── */
+/* ── Alerts ── */
 .stAlert { border-radius: 10px !important; }
+[data-testid="stInfoMessage"]    { background: #EFF6FF !important; color: #1E40AF !important; border-color: #BFDBFE !important; }
+[data-testid="stSuccessMessage"] { background: #F0FDF4 !important; color: #166534 !important; border-color: #BBF7D0 !important; }
+[data-testid="stWarningMessage"] { background: #FFFBEB !important; color: #92400E !important; border-color: #FDE68A !important; }
+[data-testid="stErrorMessage"]   { background: #FEF2F2 !important; color: #991B1B !important; border-color: #FECACA !important; }
 
-/* ── DataFrames / tables ── */
-[data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+/* ── DataFrames ── */
+[data-testid="stDataFrame"] iframe { border-radius: 10px; }
+
+/* ── Expanders en área principal ── */
+[data-testid="stExpander"] {
+    border-radius: 10px !important;
+    border: 1px solid #E2E8F0 !important;
+    background: #FAFBFC !important;
+}
+
+/* ── Divider ── */
+hr { border-color: #E2E8F0 !important; }
+
+/* ══════════════════════════
+   LOGIN
+══════════════════════════ */
+div[data-testid="stForm"] {
+    background: white;
+    border-radius: 16px;
+    padding: 2.5rem;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.1);
+    border: 1px solid #E2E8F0;
+}
+
+/* ── Progress bar ── */
+.stProgress > div > div { background: #E8420F !important; border-radius: 99px; }
+.stProgress > div { background: #E2E8F0 !important; border-radius: 99px; }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-# ── DB init + cleanup ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════
+# DB INIT
+# ══════════════════════════════════════════════════════════════════════════
 init_db()
 if "db_cleaned" not in st.session_state:
-    cleanup_old_scrapes(days=st.session_state.get("history_ttl_days", 7))
+    cleanup_old_scrapes(days=7)
     st.session_state.db_cleaned = True
 
-# ═══════════════════════════════════════════════════════════════════════════
-# AUTH
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
+# AUTH — token persistente con cookie (30 días)
+# ══════════════════════════════════════════════════════════════════════════
 
-def _check_credentials(username: str, password: str) -> bool:
+@st.cache_resource
+def _hashed_pw(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt(rounds=10)).decode()
+
+
+def _build_authenticator() -> stauth.Authenticate:
     try:
-        return (
-            username == st.secrets["credentials"]["username"]
-            and password == st.secrets["credentials"]["password"]
-        )
+        plain_pw   = st.secrets["credentials"]["password"]
+        username   = st.secrets["credentials"]["username"]
+        cookie_key = st.secrets["credentials"].get("cookie_key", "CochesNetPro_default_key_xyz")
     except Exception:
-        return username == "admin" and password == "cochesnet2024"
+        plain_pw, username, cookie_key = "cochesnet2024", "admin", "CochesNetPro_default_key_xyz"
+
+    creds = {
+        "usernames": {
+            username: {
+                "name": username.capitalize(),
+                "password": _hashed_pw(plain_pw),
+            }
+        }
+    }
+    return stauth.Authenticate(
+        credentials=creds,
+        cookie_name="cochesnet_pro_auth",
+        cookie_key=cookie_key,
+        cookie_expiry_days=30,
+    )
 
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "auth_user" not in st.session_state:
-    st.session_state.auth_user = ""
+authenticator = _build_authenticator()
 
-if not st.session_state.authenticated:
-    # ── Login page ────────────────────────────────────────────────────────
-    _, col, _ = st.columns([1, 1.4, 1])
+# Render login si no está autenticado
+if st.session_state.get("authentication_status") is not True:
+    # Columnas para centrar el form de login
+    _, col, _ = st.columns([1, 1.2, 1])
     with col:
-        st.markdown('<div class="login-logo">🚗</div>', unsafe_allow_html=True)
-        st.markdown("## CochesNet Pro")
-        st.markdown("Introduce tus credenciales para acceder")
-        st.divider()
-        username = st.text_input("Usuario", placeholder="admin", key="login_user")
-        password = st.text_input("Contraseña", type="password", placeholder="••••••••", key="login_pass")
-        if st.button("Entrar", type="primary", use_container_width=True):
-            if _check_credentials(username, password):
-                st.session_state.authenticated = True
-                st.session_state.auth_user = username
-                st.rerun()
-            else:
-                st.error("Usuario o contraseña incorrectos.")
-        st.caption("💡 Edita `.streamlit/secrets.toml` para cambiar las credenciales.")
+        st.markdown(
+            """
+            <div style="text-align:center; padding: 2.5rem 0 1rem;">
+                <div style="font-size:3.5rem; margin-bottom:.5rem;">🚗</div>
+                <h2 style="color:#0F172A; font-size:1.7rem; font-weight:800; margin:0;">CochesNet Pro</h2>
+                <p style="color:#64748B; margin:.4rem 0 1.8rem; font-size:.9rem;">
+                    Accede a tu panel de scraping y CRM
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        name, auth_status, username_result = authenticator.login(
+            fields={
+                "Form name": "",
+                "Username": "Usuario",
+                "Password": "Contraseña",
+                "Login": "Entrar →",
+            },
+            location="main",
+        )
+
+        if auth_status is False:
+            st.error("Usuario o contraseña incorrectos.")
+        elif auth_status is None:
+            st.caption("💡 Edita `.streamlit/secrets.toml` para cambiar las credenciales. El token dura 30 días.")
     st.stop()
 
-# ═══════════════════════════════════════════════════════════════════════════
-# MAIN APP  (authenticated)
-# ═══════════════════════════════════════════════════════════════════════════
+# Aquí el usuario está autenticado
+auth_username = st.session_state.get("username", "")
 
-# ── Header ────────────────────────────────────────────────────────────────
-col_title, col_user = st.columns([5, 1])
-with col_title:
-    st.markdown(
-        f"""<div class="app-header">
-            <div>
-                <h1>🚗 CochesNet Pro</h1>
-                <p>Scraper · Historial · CRM de contactos</p>
-            </div>
-        </div>""",
-        unsafe_allow_html=True,
-    )
-with col_user:
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(f"👤 **{st.session_state.auth_user}**")
-    if st.button("Cerrar sesión", key="logout"):
-        st.session_state.authenticated = False
-        st.rerun()
+# ══════════════════════════════════════════════════════════════════════════
+# SCRAPER + MAKES (cached)
+# ══════════════════════════════════════════════════════════════════════════
 
-# ── Cached resources ──────────────────────────────────────────────────────
 @st.cache_resource
 def get_scraper() -> CochesNetScraper:
     return CochesNetScraper(delay=1.5)
@@ -307,14 +353,40 @@ def fetch_makes() -> list:
 
 
 scraper = get_scraper()
-makes = fetch_makes()
+makes   = fetch_makes()
 make_label_to_obj = {m["label"]: m for m in makes}
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
+# HEADER
+# ══════════════════════════════════════════════════════════════════════════
+hcol1, hcol2 = st.columns([6, 1])
+with hcol1:
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(135deg,#E8420F 0%,#9B2406 100%);
+            border-radius: 14px; padding: 1.1rem 1.8rem;
+            display: flex; align-items: center; gap: 1rem;
+            box-shadow: 0 4px 20px rgba(232,66,15,.3); margin-bottom:.5rem;">
+            <div style="font-size:2rem">🚗</div>
+            <div>
+                <div style="color:white;font-size:1.35rem;font-weight:800;line-height:1.2">CochesNet Pro</div>
+                <div style="color:rgba(255,255,255,.75);font-size:.8rem">Scraper · Historial · CRM de contactos</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with hcol2:
+    st.markdown("<div style='padding-top:0.4rem'></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:right;color:#64748B;font-size:.85rem;padding-top:.6rem'>👤 <b>{auth_username}</b></div>", unsafe_allow_html=True)
+    authenticator.logout(button_name="Cerrar sesión", location="main")
+
+# ══════════════════════════════════════════════════════════════════════════
 # SIDEBAR — filtros de búsqueda
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("## 🔍 Filtros de búsqueda")
+    st.markdown("## 🔍 Búsqueda")
 
     with st.expander("🚘 Marca y Modelo", expanded=True):
         make_options = ["(Todas las marcas)"] + [m["label"] for m in makes]
@@ -330,24 +402,24 @@ with st.sidebar:
 
     with st.expander("💶 Precio (€)"):
         c1, c2 = st.columns(2)
-        price_from = c1.number_input("Mínimo", 0, 2_000_000, 0, 500, help="0 = sin límite")
-        price_to   = c2.number_input("Máximo", 0, 2_000_000, 0, 500, help="0 = sin límite")
+        price_from = c1.number_input("Mín", 0, 2_000_000, 0, 500, help="0 = sin límite", key="pf")
+        price_to   = c2.number_input("Máx", 0, 2_000_000, 0, 500, help="0 = sin límite", key="pt")
 
     with st.expander("📅 Año"):
         year_opts = ["(Cualquiera)"] + [str(y) for y in range(2025, 1989, -1)]
         c1, c2 = st.columns(2)
-        year_from_sel = c1.selectbox("Desde", year_opts, key="year_from")
-        year_to_sel   = c2.selectbox("Hasta", year_opts, key="year_to")
+        year_from_sel = c1.selectbox("Desde", year_opts, key="yf")
+        year_to_sel   = c2.selectbox("Hasta", year_opts, key="yt")
 
     with st.expander("🛣️ Kilómetros"):
         c1, c2 = st.columns(2)
-        km_from = c1.number_input("Mín km", 0, 1_000_000, 0, 5_000, help="0 = sin límite")
-        km_to   = c2.number_input("Máx km", 0, 1_000_000, 0, 5_000, help="0 = sin límite")
+        km_from = c1.number_input("Mín", 0, 1_000_000, 0, 5_000, help="0 = sin límite", key="kmf")
+        km_to   = c2.number_input("Máx", 0, 1_000_000, 0, 5_000, help="0 = sin límite", key="kmt")
 
     with st.expander("⚡ Potencia (CV)"):
         c1, c2 = st.columns(2)
-        hp_from = c1.number_input("Mín CV", 0, 2_000, 0, 10, help="0 = sin límite")
-        hp_to   = c2.number_input("Máx CV", 0, 2_000, 0, 10, help="0 = sin límite")
+        hp_from = c1.number_input("Mín", 0, 2_000, 0, 10, help="0 = sin límite", key="hpf")
+        hp_to   = c2.number_input("Máx", 0, 2_000, 0, 10, help="0 = sin límite", key="hpt")
 
     with st.expander("⛽ Combustible y Carrocería"):
         selected_fuels  = st.multiselect("Combustible", list(FUEL_TYPES.keys()), default=[])
@@ -359,30 +431,31 @@ with st.sidebar:
         has_warranty = st.checkbox("Solo con garantía")
 
     st.divider()
-    st.markdown("### ⚙️ Opciones de raspado")
+    st.markdown("### Opciones de raspado")
     sort_by   = st.selectbox("Ordenar por", list(SORT_OPTIONS.keys()))
-    max_pages = st.slider("Páginas a raspar", 1, 200, 5, help="~30 anuncios/página")
+    max_pages = st.slider("Páginas", 1, 200, 5, help="~30 anuncios/página")
     st.caption(f"Máximo ~{max_pages * 30:,} anuncios")
 
     scrape_btn = st.button("🚀 Iniciar Raspado", type="primary", use_container_width=True)
 
     st.divider()
-    st.markdown("### 🗂️ Resumen")
-    n_hist = count_scrapes()
-    n_crm  = count_crm()
-    st.metric("Scrapes guardados", n_hist)
-    st.metric("Contactos CRM", n_crm)
+    st.markdown("### 📊 Resumen")
+    mc1, mc2 = st.columns(2)
+    mc1.metric("Historial", count_scrapes())
+    mc2.metric("CRM", count_crm())
 
 
-# ── Build filters ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════════════
+
 def build_filters() -> dict:
     f: dict = {}
     if selected_make:
         f["make_slug"] = selected_make["slug"]
         if selected_model_label != "(Todos los modelos)":
             model_obj = next(
-                (m for m in selected_make.get("models", []) if m["label"] == selected_model_label),
-                None,
+                (m for m in selected_make.get("models", []) if m["label"] == selected_model_label), None
             )
             if model_obj:
                 f["model_slug"] = model_obj["slug"]
@@ -412,102 +485,95 @@ def build_filters() -> dict:
 
 
 def filters_summary(f: dict) -> str:
-    """Human-readable one-liner of active filters."""
     parts = []
-    if f.get("make_slug"): parts.append(f.get("make_slug", "").replace("-", " ").title())
-    if f.get("model_slug"): parts.append(f.get("model_slug", "").replace("-", " ").title())
+    if f.get("make_slug"):  parts.append(f["make_slug"].replace("-", " ").title())
+    if f.get("model_slug"): parts.append(f["model_slug"].replace("-", " ").title())
     if f.get("price_from") or f.get("price_to"):
-        parts.append(f"€{f.get('price_from',0):,}–{f.get('price_to','∞')}")
+        parts.append(f"€{f.get('price_from', 0):,}–{f.get('price_to', '∞')}")
     if f.get("year_from") or f.get("year_to"):
-        parts.append(f"{f.get('year_from','?')}–{f.get('year_to','?')}")
+        parts.append(f"{f.get('year_from', '?')}–{f.get('year_to', '?')}")
     if f.get("seller_type"):
-        parts.append(f.get("seller_type", "").capitalize())
-    if not parts:
-        parts.append("Todos los coches")
-    return " · ".join(parts)
+        parts.append(f["seller_type"].capitalize())
+    return " · ".join(parts) if parts else "Todos los coches"
 
 
-# ── Helper: display results with filters ─────────────────────────────────
-def show_results(df: pd.DataFrame, scrape_id: int | None = None):
-    """Render the results DataFrame with post-scraping filters."""
+def _safe_numeric(series: pd.Series, strip_non_digits: bool = False) -> pd.Series:
+    s = series.astype(str)
+    if strip_non_digits:
+        s = s.str.replace(r"[^\d]", "", regex=True)
+    return pd.to_numeric(s, errors="coerce")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# COMPONENTE: resultados con filtros
+# ══════════════════════════════════════════════════════════════════════════
+
+def show_results(df: pd.DataFrame, scrape_id: int):
     if df.empty:
         st.warning("No hay anuncios en este resultado.")
         return
 
-    # ── Post-scraping result filters ──────────────────────────────────────
+    uid = str(scrape_id)  # clave única para widgets
+
+    # ── Filtros post-scraping ─────────────────────────────────────────────
     with st.expander("🔧 Filtrar resultados", expanded=True):
         fc1, fc2, fc3 = st.columns(3)
         fc4, fc5, fc6 = st.columns(3)
 
-        # Price filter
-        prices_raw = pd.to_numeric(
-            df.get("precio_€", pd.Series(dtype=float)).astype(str).str.replace(r"[^\d]", "", regex=True),
-            errors="coerce",
-        ).fillna(0)
-        p_min = int(prices_raw.min()) if not prices_raw.empty else 0
-        p_max = int(prices_raw.max()) if not prices_raw.empty else 200_000
-        if p_min == p_max: p_max = p_min + 1
-        f_price = fc1.slider("💶 Precio (€)", p_min, p_max, (p_min, p_max), step=500, key=f"fp_{scrape_id}")
+        # Precio
+        prices_raw = _safe_numeric(df.get("precio_€", pd.Series(dtype=float)), strip_non_digits=True).fillna(0)
+        p_min, p_max = int(prices_raw.min()), int(prices_raw.max())
+        if p_min == p_max: p_max += 1
+        f_price = fc1.slider("💶 Precio €", p_min, p_max, (p_min, p_max), step=500, key=f"fp{uid}")
 
-        # Year filter
-        years_raw = pd.to_numeric(df.get("año", pd.Series(dtype=float)), errors="coerce").fillna(2000)
-        y_min = int(years_raw.min()) if not years_raw.empty else 1990
-        y_max = int(years_raw.max()) if not years_raw.empty else 2025
-        if y_min == y_max: y_max = y_min + 1
-        f_year = fc2.slider("📅 Año", y_min, y_max, (y_min, y_max), key=f"fy_{scrape_id}")
+        # Año
+        years_raw = _safe_numeric(df.get("año", pd.Series(dtype=float))).fillna(2000)
+        y_min, y_max = int(years_raw.min()), int(years_raw.max())
+        if y_min == y_max: y_max += 1
+        f_year = fc2.slider("📅 Año", y_min, y_max, (y_min, y_max), key=f"fy{uid}")
 
-        # KM filter
-        km_raw = pd.to_numeric(
-            df.get("kilometros", pd.Series(dtype=float)).astype(str).str.replace(r"[^\d]", "", regex=True),
-            errors="coerce",
-        ).fillna(0)
-        k_min = int(km_raw.min()) if not km_raw.empty else 0
-        k_max = int(km_raw.max()) if not km_raw.empty else 300_000
-        if k_min == k_max: k_max = k_min + 1
-        f_km = fc3.slider("🛣️ Kilómetros", k_min, k_max, (k_min, k_max), step=5_000, key=f"fk_{scrape_id}")
+        # Kilómetros
+        km_raw = _safe_numeric(df.get("kilometros", pd.Series(dtype=float)), strip_non_digits=True).fillna(0)
+        k_min, k_max = int(km_raw.min()), int(km_raw.max())
+        if k_min == k_max: k_max += 1
+        f_km = fc3.slider("🛣️ Km", k_min, k_max, (k_min, k_max), step=5_000, key=f"fk{uid}")
 
         # Combustible
-        combust_vals = sorted(df["combustible"].dropna().unique().tolist()) if "combustible" in df.columns else []
-        f_fuel = fc4.multiselect("⛽ Combustible", combust_vals, default=[], key=f"ff_{scrape_id}")
+        combust = sorted(df["combustible"].dropna().unique()) if "combustible" in df.columns else []
+        f_fuel = fc4.multiselect("⛽ Combustible", combust, default=[], key=f"ff{uid}")
 
-        # Seller type (post-filter on vendedor_profesional field)
-        f_seller = fc5.selectbox(
-            "👤 Vendedor", ["Todos", "Particular", "Profesional"], key=f"fs_{scrape_id}"
+        # Vendedor
+        f_seller = fc5.selectbox("👤 Vendedor", ["Todos", "Particular", "Profesional"], key=f"fs{uid}")
+
+        # Provincia
+        provs = sorted(df["provincia"].dropna().unique()) if "provincia" in df.columns else []
+        f_prov = fc6.multiselect("📍 Provincia", provs, default=[], key=f"fprov{uid}")
+
+        # Búsqueda texto
+        f_txt = st.text_input(
+            "🔎 Buscar en título",
+            placeholder="ej: automático, pocos km, color rojo…",
+            key=f"ftxt{uid}",
         )
 
-        # Province filter
-        prov_vals = sorted(df["provincia"].dropna().unique().tolist()) if "provincia" in df.columns else []
-        f_prov = fc6.multiselect("📍 Provincia", prov_vals, default=[], key=f"fprov_{scrape_id}")
-
-        # Text search in title
-        f_txt = st.text_input("🔎 Buscar en título", placeholder="ej: cambio de aceite, techo panorámico…", key=f"ftxt_{scrape_id}")
-
-    # ── Apply filters ─────────────────────────────────────────────────────
-    mask = pd.Series([True] * len(df), index=df.index)
+    # ── Aplicar filtros ───────────────────────────────────────────────────
+    mask = pd.Series(True, index=df.index)
 
     if "precio_€" in df.columns:
-        p_col = pd.to_numeric(
-            df["precio_€"].astype(str).str.replace(r"[^\d]", "", regex=True), errors="coerce"
-        ).fillna(0)
+        p_col = _safe_numeric(df["precio_€"], strip_non_digits=True).fillna(0)
         mask &= p_col.between(f_price[0], f_price[1])
 
     if "año" in df.columns:
-        y_col = pd.to_numeric(df["año"], errors="coerce").fillna(0)
-        mask &= y_col.between(f_year[0], f_year[1])
+        mask &= _safe_numeric(df["año"]).fillna(0).between(f_year[0], f_year[1])
 
     if "kilometros" in df.columns:
-        k_col = pd.to_numeric(
-            df["kilometros"].astype(str).str.replace(r"[^\d]", "", regex=True), errors="coerce"
-        ).fillna(0)
-        mask &= k_col.between(f_km[0], f_km[1])
+        mask &= _safe_numeric(df["kilometros"], strip_non_digits=True).fillna(0).between(f_km[0], f_km[1])
 
     if f_fuel and "combustible" in df.columns:
         mask &= df["combustible"].isin(f_fuel)
 
     if f_seller != "Todos" and "vendedor_profesional" in df.columns:
-        is_pro = df["vendedor_profesional"].apply(
-            lambda x: str(x).lower() in ("true", "1", "yes", "sí")
-        )
+        is_pro = df["vendedor_profesional"].astype(str).str.lower().isin(("true", "1", "yes"))
         mask &= is_pro if f_seller == "Profesional" else ~is_pro
 
     if f_prov and "provincia" in df.columns:
@@ -518,38 +584,34 @@ def show_results(df: pd.DataFrame, scrape_id: int | None = None):
 
     filtered = df[mask].copy()
 
-    # ── Metrics ───────────────────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Anuncios", f"{len(filtered):,}")
+    # ── Métricas ──────────────────────────────────────────────────────────
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Anuncios", f"{len(filtered):,}")
 
-    prices_f = pd.to_numeric(
-        filtered.get("precio_€", pd.Series()).astype(str).str.replace(r"[^\d]", "", regex=True),
-        errors="coerce",
-    ).dropna()
-    if not prices_f.empty:
-        c2.metric("Precio medio", f"{prices_f.mean():,.0f} €")
+    p_f = _safe_numeric(filtered.get("precio_€", pd.Series()), strip_non_digits=True).dropna()
+    if not p_f.empty: mc2.metric("Precio medio", f"{p_f.mean():,.0f} €")
 
-    years_f = pd.to_numeric(filtered.get("año", pd.Series()), errors="coerce").dropna()
-    if not years_f.empty:
-        c3.metric("Año medio", f"{years_f.mean():.0f}")
+    y_f = _safe_numeric(filtered.get("año", pd.Series())).dropna()
+    if not y_f.empty: mc3.metric("Año medio", f"{y_f.mean():.0f}")
 
-    km_f = pd.to_numeric(
-        filtered.get("kilometros", pd.Series()).astype(str).str.replace(r"[^\d]", "", regex=True),
-        errors="coerce",
-    ).dropna()
-    if not km_f.empty:
-        c4.metric("KM medios", f"{km_f.mean():,.0f}")
+    k_f = _safe_numeric(filtered.get("kilometros", pd.Series()), strip_non_digits=True).dropna()
+    if not k_f.empty: mc4.metric("KM medios", f"{k_f.mean():,.0f}")
 
-    st.markdown(f"<small style='color:#64748B'>Mostrando **{len(filtered):,}** de **{len(df):,}** anuncios</small>", unsafe_allow_html=True)
+    n_total = len(df)
+    n_filt  = len(filtered)
+    if n_filt < n_total:
+        st.markdown(
+            f"<p style='color:#64748B;font-size:.82rem;margin:.5rem 0'>Mostrando <b>{n_filt:,}</b> de <b>{n_total:,}</b> anuncios</p>",
+            unsafe_allow_html=True,
+        )
 
-    # ── Column selector ───────────────────────────────────────────────────
+    # ── Selector columnas visibles ─────────────────────────────────────────
     all_cols = list(filtered.columns)
-    default_cols = [c for c in ["titulo", "precio_€", "año", "kilometros", "combustible",
-                                 "carroceria", "ciudad", "provincia", "vendedor_profesional",
-                                 "telefono", "url"] if c in all_cols]
-    shown_cols = st.multiselect(
-        "Columnas visibles", all_cols, default=default_cols, key=f"cols_{scrape_id}"
-    )
+    default_cols = [c for c in [
+        "titulo", "precio_€", "año", "kilometros", "combustible",
+        "carroceria", "ciudad", "provincia", "vendedor_profesional", "telefono", "url",
+    ] if c in all_cols]
+    shown_cols = st.multiselect("Columnas visibles", all_cols, default=default_cols, key=f"cols{uid}")
     if not shown_cols:
         shown_cols = default_cols
 
@@ -558,214 +620,244 @@ def show_results(df: pd.DataFrame, scrape_id: int | None = None):
         use_container_width=True,
         height=480,
         column_config={
-            "url": st.column_config.LinkColumn("URL", display_text="Ver anuncio"),
-            "precio_€": st.column_config.NumberColumn("Precio €", format="%d €"),
-            "año": st.column_config.NumberColumn("Año"),
-            "kilometros": st.column_config.NumberColumn("Kilómetros"),
+            "url":                  st.column_config.LinkColumn("URL", display_text="Ver anuncio"),
+            "precio_€":             st.column_config.NumberColumn("Precio €", format="%d €"),
+            "año":                  st.column_config.NumberColumn("Año"),
+            "kilometros":           st.column_config.NumberColumn("Kilómetros"),
             "vendedor_profesional": st.column_config.CheckboxColumn("Profesional"),
         },
     )
 
-    # ── Actions ───────────────────────────────────────────────────────────
-    col_dl, col_crm = st.columns([2, 1])
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # ── Acciones ──────────────────────────────────────────────────────────
+    ba, bb = st.columns(2)
+    ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
     buf = io.StringIO()
     filtered.to_csv(buf, index=False, encoding="utf-8-sig")
-    col_dl.download_button(
+    ba.download_button(
         "⬇️ Descargar CSV",
         data=buf.getvalue(),
         file_name=f"cochesnet_{ts}.csv",
         mime="text/csv",
         use_container_width=True,
+        key=f"dl{uid}",
     )
 
-    if col_crm.button("➕ Añadir selección al CRM", use_container_width=True, key=f"addcrm_{scrape_id}"):
+    if bb.button(f"➕ Añadir {n_filt:,} resultados al CRM", use_container_width=True, key=f"addcrm{uid}"):
         added = 0
-        for _, row in filtered.head(50).iterrows():
+        for _, row in filtered.iterrows():   # ← sin límite
             add_crm_from_car(row.to_dict())
             added += 1
-        st.success(f"✅ {added} anuncios añadidos al CRM.")
+        st.success(f"✅ {added:,} anuncios añadidos al CRM.")
         st.rerun()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
 # TABS
-# ═══════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════
 tab_scraper, tab_historial, tab_crm = st.tabs(["🔍 Scraper", "📋 Historial", "👥 CRM"])
 
-# ──────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # TAB 1 — SCRAPER
-# ──────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 with tab_scraper:
     if scrape_btn:
         filters = build_filters()
-        ftxt = filters_summary(filters)
+        ftxt    = filters_summary(filters)
 
-        progress_bar = st.progress(0.0)
+        prog   = st.progress(0.0)
         status = st.empty()
 
         def on_progress(page: int, total: int, found: int):
-            progress_bar.progress(page / total)
-            status.info(f"Raspando página {page}/{total} — {found} anuncios encontrados…")
+            prog.progress(page / total)
+            status.info(f"Raspando página {page} / {total} — {found} anuncios encontrados…")
 
         status.info("⏳ Iniciando raspado…")
         df = scraper.scrape(filters, max_pages=max_pages, progress_callback=on_progress)
-        progress_bar.progress(1.0)
+        prog.progress(1.0)
 
         if df.empty:
             status.warning("No se encontraron anuncios con los filtros seleccionados.")
         else:
-            status.success(f"✅ Completado: **{len(df):,} anuncios** encontrados.")
-            # Auto-save to history
+            status.success(f"✅ Completado — **{len(df):,} anuncios** encontrados.")
             sid = save_scrape(ftxt, df)
             st.session_state["last_scrape_id"] = sid
-            st.session_state[f"scrape_{sid}"] = df
-            st.info(f"💾 Guardado en historial (ID #{sid}) — *'{ftxt}'*")
+            st.session_state[f"scrape_{sid}"]  = df
+            st.info(f"💾 Guardado en historial (#{sid}) — *{ftxt}*")
             show_results(df, scrape_id=sid)
 
     elif "last_scrape_id" in st.session_state:
-        sid = st.session_state["last_scrape_id"]
-        df_cached = st.session_state.get(f"scrape_{sid}")
-        if df_cached is not None and not df_cached.empty:
-            st.info("📌 Mostrando los resultados del último raspado. Pulsa **Iniciar Raspado** para buscar de nuevo.")
-            show_results(df_cached, scrape_id=sid)
+        sid      = st.session_state["last_scrape_id"]
+        df_cache = st.session_state.get(f"scrape_{sid}")
+        if df_cache is not None and not df_cache.empty:
+            st.info("📌 Mostrando el último raspado. Pulsa **🚀 Iniciar Raspado** para buscar de nuevo.")
+            show_results(df_cache, scrape_id=sid)
         else:
-            st.info("Configura los filtros en la barra lateral y pulsa **🚀 Iniciar Raspado**.")
+            st.info("Configura los filtros y pulsa **🚀 Iniciar Raspado**.")
     else:
         st.markdown(
             """
-            <div style="text-align:center; padding: 3rem 1rem; color:#94A3B8;">
-                <div style="font-size:4rem; margin-bottom:1rem;">🚗</div>
-                <h3 style="color:#1B3A6B; margin-bottom:0.5rem;">Listo para buscar</h3>
-                <p>Configura los filtros en la barra lateral y pulsa <strong>🚀 Iniciar Raspado</strong>.</p>
-                <p style="font-size:0.8rem;">Los resultados se guardan automáticamente en el historial.</p>
+            <div style="text-align:center;padding:4rem 1rem;color:#94A3B8">
+                <div style="font-size:4rem;margin-bottom:1rem">🔍</div>
+                <h3 style="color:#334155;margin-bottom:.5rem;font-size:1.3rem">Listo para buscar</h3>
+                <p style="margin:0;font-size:.9rem">Configura los filtros en la barra lateral y pulsa <b>🚀 Iniciar Raspado</b>.</p>
+                <p style="margin:.5rem 0 0;font-size:.78rem;color:#CBD5E1">Los resultados se guardan automáticamente.</p>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-# ──────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # TAB 2 — HISTORIAL
-# ──────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 with tab_historial:
     st.markdown("### 📋 Historial de raspados")
+    st.caption("Los resultados se guardan automáticamente. Haz clic en **Cargar** para recuperar cualquier búsqueda sin volver a scrapear.")
 
-    col_ttl, col_refresh = st.columns([3, 1])
-    history_ttl = col_ttl.slider(
-        "Borrar automáticamente después de (días)", 1, 30, 7, key="history_ttl_days"
-    )
-    if col_refresh.button("🗑️ Limpiar ahora", key="clean_hist"):
-        cleanup_old_scrapes(days=history_ttl)
-        st.success(f"Eliminados scrapes con más de {history_ttl} días.")
+    hc1, hc2 = st.columns([3, 1])
+    hist_ttl = hc1.slider("Auto-borrar después de (días)", 1, 60, 7, key="hist_ttl")
+    if hc2.button("🗑️ Limpiar ahora", key="clean_btn"):
+        cleanup_old_scrapes(days=hist_ttl)
+        st.success(f"Eliminados scrapes con más de {hist_ttl} días.")
         st.rerun()
 
     scrapes = list_scrapes()
     if not scrapes:
         st.markdown(
-            """<div style="text-align:center;padding:3rem;color:#94A3B8;">
+            """<div style="text-align:center;padding:3rem;color:#94A3B8">
                 <div style="font-size:3rem">📭</div>
-                <p>El historial está vacío.<br>Los raspados se guardan automáticamente al completarse.</p>
+                <p>El historial está vacío.<br>Los raspados se guardan solos al completarse.</p>
             </div>""",
             unsafe_allow_html=True,
         )
     else:
-        st.markdown(f"**{len(scrapes)} raspado(s) guardado(s)**")
+        st.markdown(f"**{len(scrapes)} raspado(s) guardado(s)**", unsafe_allow_html=False)
+        st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
+
         for s in scrapes:
-            c1, c2, c3, c4 = st.columns([2.5, 3, 1, 1])
-            c1.markdown(f"🕐 `{s['timestamp']}`")
-            c2.markdown(f"🏷️ {s['filters_txt'] or '—'} · **{s['num_results']:,} anuncios**")
+            with st.container():
+                c1, c2, c3, c4 = st.columns([1.8, 3.5, 1, 1])
+                c1.markdown(
+                    f"<span style='color:#64748B;font-size:.82rem'>🕐 {s['timestamp']}</span>",
+                    unsafe_allow_html=True,
+                )
+                c2.markdown(
+                    f"<span style='color:#334155;font-size:.88rem'>🏷️ <b>{s['filters_txt'] or '—'}</b> &nbsp;·&nbsp; {s['num_results']:,} anuncios</span>",
+                    unsafe_allow_html=True,
+                )
 
-            load_key   = f"load_{s['id']}"
-            delete_key = f"del_{s['id']}"
+                if c3.button("📂 Cargar", key=f"load_{s['id']}", use_container_width=True):
+                    with st.spinner("Cargando…"):
+                        df_hist = load_scrape(s["id"])
+                    if df_hist is not None:
+                        st.session_state["last_scrape_id"]     = s["id"]
+                        st.session_state[f"scrape_{s['id']}"]  = df_hist
+                        st.success("✅ Cargado. Ve a la pestaña **🔍 Scraper** para verlo.")
+                    else:
+                        st.error("No se pudo cargar.")
 
-            if c3.button("📂 Cargar", key=load_key, use_container_width=True):
-                with st.spinner("Cargando…"):
-                    df_hist = load_scrape(s["id"])
-                if df_hist is not None:
-                    st.session_state["last_scrape_id"] = s["id"]
-                    st.session_state[f"scrape_{s['id']}"] = df_hist
-                    st.success("✅ Resultado cargado. Ve a la pestaña **Scraper** para verlo.")
-                else:
-                    st.error("No se pudo cargar el scrape.")
+                if c4.button("🗑️", key=f"del_{s['id']}", use_container_width=True):
+                    delete_scrape(s["id"])
+                    st.session_state.pop(f"scrape_{s['id']}", None)
+                    if st.session_state.get("last_scrape_id") == s["id"]:
+                        st.session_state.pop("last_scrape_id", None)
+                    st.rerun()
 
-            if c4.button("🗑️", key=delete_key, use_container_width=True):
-                delete_scrape(s["id"])
-                # Remove from session too
-                st.session_state.pop(f"scrape_{s['id']}", None)
-                if st.session_state.get("last_scrape_id") == s["id"]:
-                    st.session_state.pop("last_scrape_id", None)
-                st.rerun()
+                st.markdown("<hr style='margin:6px 0;border-color:#F1F5F9'>", unsafe_allow_html=True)
 
-            st.markdown("<hr style='margin:4px 0; border-color:#F0F4F8'>", unsafe_allow_html=True)
-
-# ──────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # TAB 3 — CRM
-# ──────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 with tab_crm:
     st.markdown("### 👥 CRM — Registro de contactos")
-    st.caption("Aquí puedes llevar un seguimiento de todas las personas que contactas. Edita directamente en la tabla y guarda los cambios.")
+    st.caption(
+        "Edita directamente en la tabla. Marca ✅ la columna **Borrar** en las filas que quieras eliminar y pulsa **Eliminar marcadas**. "
+        "El timestamp de creación se asigna automáticamente."
+    )
 
-    # Load CRM from DB
     crm_df = get_crm()
 
-    # ── Actions toolbar ───────────────────────────────────────────────────
-    ca, cb, cc = st.columns([1, 1, 1])
+    # ── Toolbar ───────────────────────────────────────────────────────────
+    ta, tb, tc, td = st.columns([1.2, 1.2, 1.2, 1])
 
-    if ca.button("➕ Añadir contacto vacío", use_container_width=True):
+    add_empty = ta.button("➕ Nuevo contacto", use_container_width=True)
+    save_btn  = tb.button("💾 Guardar cambios", type="primary", use_container_width=True)
+    del_btn   = tc.button("🗑️ Eliminar marcadas", use_container_width=True)
+
+    if add_empty:
         new_row = pd.DataFrame([{
             "id": None, "nombre": "", "telefono": "", "email": "",
             "url_anuncio": "", "titulo_vehiculo": "", "precio": "",
-            "estado": "Pendiente", "fecha_contacto": "", "fecha_seguimiento": "", "notas": "",
+            "estado": "Pendiente", "fecha_contacto": "", "fecha_seguimiento": "",
+            "notas": "", "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }])
         crm_df = pd.concat([crm_df, new_row], ignore_index=True)
-        st.session_state["crm_unsaved"] = crm_df
+        st.session_state["crm_draft"] = crm_df
 
-    if cc.button("⬇️ Exportar CSV", use_container_width=True):
-        buf = io.StringIO()
-        crm_df.to_csv(buf, index=False, encoding="utf-8-sig")
-        st.download_button(
-            "Descargar CRM.csv",
-            data=buf.getvalue(),
-            file_name=f"crm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-        )
+    # Usar draft si existe
+    edit_source = st.session_state.get("crm_draft", crm_df)
 
-    # Use unsaved df if exists
-    edit_df = st.session_state.get("crm_unsaved", crm_df)
+    # Añadir columna de borrado al DataFrame que se edita
+    edit_with_del = edit_source.copy()
+    edit_with_del.insert(0, "_borrar", False)
 
-    # ── Editable table ────────────────────────────────────────────────────
+    # ── Tabla editable ────────────────────────────────────────────────────
     edited = st.data_editor(
-        edit_df,
+        edit_with_del,
         use_container_width=True,
-        height=520,
+        height=540,
         num_rows="dynamic",
         column_config={
-            "id": st.column_config.NumberColumn("ID", disabled=True, width="small"),
-            "nombre": st.column_config.TextColumn("Nombre", width="medium"),
-            "telefono": st.column_config.TextColumn("Teléfono", width="medium"),
-            "email": st.column_config.TextColumn("Email", width="medium"),
-            "url_anuncio": st.column_config.LinkColumn("Anuncio", display_text="Ver", width="small"),
-            "titulo_vehiculo": st.column_config.TextColumn("Vehículo", width="large"),
-            "precio": st.column_config.TextColumn("Precio", width="small"),
-            "estado": st.column_config.SelectboxColumn(
-                "Estado", options=CRM_ESTADOS, width="medium"
-            ),
-            "fecha_contacto": st.column_config.TextColumn("Contactado", width="medium"),
-            "fecha_seguimiento": st.column_config.TextColumn("Seguimiento", width="medium"),
-            "notas": st.column_config.TextColumn("Notas", width="large"),
+            "_borrar":          st.column_config.CheckboxColumn("🗑️ Borrar", default=False, width="small"),
+            "id":               st.column_config.NumberColumn("ID", disabled=True, width="small"),
+            "nombre":           st.column_config.TextColumn("Nombre", width="medium"),
+            "telefono":         st.column_config.TextColumn("Teléfono", width="medium"),
+            "email":            st.column_config.TextColumn("Email", width="medium"),
+            "url_anuncio":      st.column_config.LinkColumn("Anuncio", display_text="Ver 🔗", width="small"),
+            "titulo_vehiculo":  st.column_config.TextColumn("Vehículo", width="large"),
+            "precio":           st.column_config.TextColumn("Precio", width="small"),
+            "estado":           st.column_config.SelectboxColumn("Estado", options=CRM_ESTADOS, width="medium"),
+            "fecha_contacto":   st.column_config.TextColumn("Contactado", width="medium"),
+            "fecha_seguimiento":st.column_config.TextColumn("Seguimiento", width="medium"),
+            "notas":            st.column_config.TextColumn("Notas", width="large"),
+            "created_at":       st.column_config.TextColumn("Creado", disabled=True, width="medium"),
         },
         column_order=[
-            "id", "nombre", "estado", "telefono", "email",
+            "_borrar", "id", "nombre", "estado", "telefono", "email",
             "titulo_vehiculo", "precio", "url_anuncio",
-            "fecha_contacto", "fecha_seguimiento", "notas",
+            "fecha_contacto", "fecha_seguimiento", "notas", "created_at",
         ],
         hide_index=True,
         key="crm_editor",
     )
 
-    # ── Save button ───────────────────────────────────────────────────────
-    if cb.button("💾 Guardar cambios", type="primary", use_container_width=True):
-        save_crm(edited)
-        st.session_state.pop("crm_unsaved", None)
+    # Botón guardar
+    if save_btn:
+        clean = edited.drop(columns=["_borrar"], errors="ignore")
+        save_crm(clean)
+        st.session_state.pop("crm_draft", None)
         st.success("✅ CRM guardado correctamente.")
         st.rerun()
+
+    # Botón eliminar marcadas
+    if del_btn:
+        rows_to_keep = edited[~edited["_borrar"]].drop(columns=["_borrar"], errors="ignore")
+        n_deleted = len(edited) - len(rows_to_keep)
+        if n_deleted == 0:
+            st.warning("No hay filas marcadas para borrar.")
+        else:
+            save_crm(rows_to_keep)
+            st.session_state.pop("crm_draft", None)
+            st.success(f"✅ {n_deleted} fila(s) eliminada(s).")
+            st.rerun()
+
+    # Exportar CSV
+    st.divider()
+    exp_buf = io.StringIO()
+    crm_df.to_csv(exp_buf, index=False, encoding="utf-8-sig")
+    td.download_button(
+        "⬇️ CSV",
+        data=exp_buf.getvalue(),
+        file_name=f"crm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
