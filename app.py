@@ -52,7 +52,8 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
-#MainMenu, footer, header[data-testid="stHeader"] { display: none !important; }
+#MainMenu, footer { display: none !important; }
+header[data-testid="stHeader"] { background: transparent !important; }
 .block-container { padding: 1.6rem 2.2rem 3rem !important; max-width: 1440px !important; }
 
 /* ── Sidebar ── solo fondo oscuro; el texto lo gestiona el tema */
@@ -606,17 +607,18 @@ with tab_crm:
     if selall_btn:
         st.session_state.pop("crm_editor", None)
         st.session_state["crm_sel_all"] = True
+        st.session_state.pop("crm_range", None)
         st.rerun()
 
     # Marcar rango (tras rerun, el editor ya no tiene caché)
-    rng = st.session_state.pop("crm_range", None)
+    rng = st.session_state.get("crm_range")
     if rng:
         lo, hi = rng
         edit_with_del["_borrar"] = False
         edit_with_del.loc[edit_with_del.index[lo:hi], "_borrar"] = True
 
-    # Aplicar seleccionar-todo (tras rerun con editor limpio)
-    if st.session_state.pop("crm_sel_all", False):
+    # Aplicar seleccionar-todo (persistente hasta acción de guardar/borrar)
+    if st.session_state.get("crm_sel_all", False):
         edit_with_del["_borrar"] = True
 
     # ── Caption ───────────────────────────────────────────────────────────
@@ -666,6 +668,8 @@ with tab_crm:
         full_to_save  = pd.concat([hidden_df, edited_clean], ignore_index=True)
         save_crm(full_to_save)
         st.session_state.pop("crm_draft", None)
+        st.session_state.pop("crm_sel_all", None)
+        st.session_state.pop("crm_range", None)
         st.success("✅ CRM guardado.")
         st.rerun()
 
@@ -678,6 +682,8 @@ with tab_crm:
             full_to_save = pd.concat([hidden_df, to_keep_vis], ignore_index=True)
             save_crm(full_to_save)
             st.session_state.pop("crm_draft", None)
+            st.session_state.pop("crm_sel_all", None)
+            st.session_state.pop("crm_range", None)
             st.success(f"✅ {n_del} fila(s) eliminada(s).")
             st.rerun()
 

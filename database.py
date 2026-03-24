@@ -197,7 +197,12 @@ def save_crm(df: pd.DataFrame):
 
 
 def add_crm_from_car(car: dict) -> int:
-    is_pro = car.get("vendedor_profesional", False)
+    raw = car.get("vendedor_profesional", False)
+    # Handle string booleans from JSON-loaded DataFrames ("True"/"False")
+    if isinstance(raw, str):
+        is_pro = raw.lower() in ("true", "1", "yes", "sí")
+    else:
+        is_pro = bool(raw)
     tipo_vendedor = "Profesional" if is_pro else "Particular"
     with _conn() as c:
         cur = c.execute(

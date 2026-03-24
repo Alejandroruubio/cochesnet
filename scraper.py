@@ -242,7 +242,7 @@ class CochesNetScraper:
             "provincia":            location.get("mainProvince", ""),
             "vendedor":             seller.get("name", ""),
             "telefono":             car.get("phone", ""),
-            "vendedor_profesional": bool(car.get("isProfessional", False)),
+            "vendedor_profesional": bool(car.get("isProfessional") or seller.get("isProfessional", False)),
             "valoracion_vendedor":  (seller.get("ratings") or {}).get("average", ""),
             "num_fotos":            len(car.get("photos") or []),
             "fecha_publicacion":    car.get("publicationDate", ""),
