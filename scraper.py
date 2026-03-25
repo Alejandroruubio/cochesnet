@@ -168,12 +168,20 @@ class CochesNetScraper:
         make_slug  = filters.get("make_slug",  "").strip()
         model_slug = filters.get("model_slug", "").strip()
 
+        # Seller type goes in path segment, not query param
+        seller = filters.get("seller_type", "")
+        seller_segment = ""
+        if seller == "particular":
+            seller_segment = "particulares/"
+        elif seller == "profesional":
+            seller_segment = "profesionales/"
+
         if make_slug and model_slug:
-            path = f"/{make_slug}/{model_slug}/segunda-mano/"
+            path = f"/{make_slug}/{model_slug}/segunda-mano/{seller_segment}"
         elif make_slug:
-            path = f"/{make_slug}/segunda-mano/"
+            path = f"/{make_slug}/segunda-mano/{seller_segment}"
         else:
-            path = SEARCH_PATH
+            path = f"/segunda-mano/{seller_segment}"
 
         params: dict = {"pg": page}
 
@@ -181,30 +189,26 @@ class CochesNetScraper:
             if val is not None and val != 0 and val != "":
                 params[key] = val
 
-        add("price.from", filters.get("price_from"))
-        add("price.to",   filters.get("price_to"))
-        add("year.from",  filters.get("year_from"))
-        add("year.to",    filters.get("year_to"))
-        add("kms.from",   filters.get("km_from"))
-        add("kms.to",     filters.get("km_to"))
-        add("hp.from",    filters.get("hp_from"))
-        add("hp.to",      filters.get("hp_to"))
+        add("MinPrice", filters.get("price_from"))
+        add("MaxPrice", filters.get("price_to"))
+        add("MinYear",  filters.get("year_from"))
+        add("MaxYear",  filters.get("year_to"))
+        add("MinKms",   filters.get("km_from"))
+        add("MaxKms",   filters.get("km_to"))
+        add("MinHorsePower", filters.get("hp_from"))
+        add("MaxHorsePower", filters.get("hp_to"))
 
         if filters.get("fuel_type_ids"):
-            params["fuelTypeIds"] = ",".join(filters["fuel_type_ids"])
+            params["FuelTypeIds"] = ",".join(filters["fuel_type_ids"])
         if filters.get("body_type_ids"):
-            params["bodyTypeIds"] = ",".join(filters["body_type_ids"])
+            params["BodyTypeIds"] = ",".join(filters["body_type_ids"])
         if filters.get("transmission_id"):
-            params["transmissionTypeId"] = filters["transmission_id"]
+            params["TransmissionTypeId"] = filters["transmission_id"]
         if filters.get("has_warranty"):
-            params["hasWarranty"] = "true"
-
-        seller = filters.get("seller_type", "")
-        if seller and seller not in ("todos", ""):
-            params["dealerType"] = seller
+            params["HasWarranty"] = "true"
 
         if filters.get("sort"):
-            params["sortBy"] = filters["sort"]
+            params["OrderBy"] = filters["sort"]
 
         return BASE_URL + path + "?" + urlencode(params)
 
