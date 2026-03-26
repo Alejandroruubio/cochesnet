@@ -24,14 +24,30 @@ from database import (
     delete_scrape,
     get_crm,
     get_note,
+    get_whatsapp_daily_count,
+    get_whatsapp_log,
+    get_whatsapp_sent_phones,
     import_csv_to_crm,
     init_db,
     list_notes,
     list_scrapes,
     load_scrape,
+    log_whatsapp,
     save_crm,
     save_note,
     save_scrape,
+)
+from whatsapp import (
+    DEFAULT_TEMPLATES,
+    SAFETY_DEFAULTS,
+    WA_CONFIGURED,
+    check_connection,
+    check_whatsapp_numbers,
+    is_within_hours,
+    normalize_phone,
+    pick_template,
+    render_template,
+    send_bulk,
 )
 from scraper import BODY_TYPES, FUEL_TYPES, SORT_OPTIONS, TRANSMISSIONS, CochesNetScraper
 
@@ -454,8 +470,8 @@ def show_results(df: pd.DataFrame, scrape_id: int):
 # ══════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════
-tab_scraper, tab_historial, tab_crm, tab_notas = st.tabs(
-    ["🔍 Scraper", "📋 Historial", "👥 CRM", "📝 Notas"]
+tab_scraper, tab_historial, tab_crm, tab_whatsapp, tab_notas = st.tabs(
+    ["🔍 Scraper", "📋 Historial", "👥 CRM", "📱 WhatsApp", "📝 Notas"]
 )
 
 # ─────────────────────────────────────────────
@@ -719,7 +735,276 @@ with tab_crm:
                 st.error(f"Error al leer CSV: {e}")
 
 # ─────────────────────────────────────────────
-# TAB 4 — NOTAS
+# TAB 4 — WHATSAPP
+# ─────────────────────────────────────────────
+with tab_whatsapp:
+    st.markdown("### 📱 WhatsApp — Mensajería automática")
+
+    if not WA_CONFIGURED:
+        st.warning(
+            "WhatsApp no configurado. Añade las credenciales de Evolution API en **Settings → Secrets**:\n"
+            "```toml\n[whatsapp]\napi_url = \"http://tu-servidor:8080\"\n"
+            "api_key = \"TuApiKey\"\ninstance = \"STC\"\n```"
+        )
+    else:
+        # ── Connection status ──────────────────────────────────────────
+        conn_status = check_connection()
+        if conn_status["connected"]:
+            st.success("WhatsApp conectado")
+        else:
+            st.error(f"WhatsApp desconectado — {conn_status.get('error') or conn_status.get('state', '?')}")
+
+        # ── Safety settings ────────────────────────────────────────────
+        with st.expander("Ajustes de seguridad anti-ban", expanded=False):
+            st.caption(
+                "Estos ajustes protegen tu número de WhatsApp contra bloqueos. "
+                "No los bajes demasiado."
+            )
+            sc1, sc2, sc3 = st.columns(3)
+            wa_max_daily = sc1.number_input(
+                "Mensajes/día", 1, 100, SAFETY_DEFAULTS["max_daily"],
+                help="Max conversaciones nuevas por día. WhatsApp penaliza >50/día en números nuevos.",
+                key="wa_max_daily",
+            )
+            wa_min_delay = sc2.number_input(
+                "Delay mín (s)", 10, 300, SAFETY_DEFAULTS["min_delay_s"],
+                help="Segundos mínimos entre mensajes.", key="wa_min_delay",
+            )
+            wa_max_delay = sc3.number_input(
+                "Delay máx (s)", 30, 600, SAFETY_DEFAULTS["max_delay_s"],
+                help="Segundos máximos entre mensajes.", key="wa_max_delay",
+            )
+            hc1, hc2 = st.columns(2)
+            wa_hour_start = hc1.number_input("Hora inicio", 0, 23, SAFETY_DEFAULTS["hour_start"], key="wa_h_start")
+            wa_hour_end   = hc2.number_input("Hora fin", 1, 24, SAFETY_DEFAULTS["hour_end"], key="wa_h_end")
+
+        limits = {
+            "max_daily": wa_max_daily,
+            "min_delay_s": wa_min_delay,
+            "max_delay_s": wa_max_delay,
+            "hour_start": wa_hour_start,
+            "hour_end": wa_hour_end,
+            "typing_delay_ms": SAFETY_DEFAULTS["typing_delay_ms"],
+            "country_code": SAFETY_DEFAULTS["country_code"],
+        }
+
+        # ── Templates ──────────────────────────────────────────────────
+        with st.expander("Plantillas de mensaje", expanded=True):
+            st.caption(
+                "Variables disponibles: `{titulo}`, `{precio}`, `{nombre}`, "
+                "`{marca}`, `{modelo}`, `{año}`, `{ciudad}`. "
+                "Se elige una plantilla al azar para cada contacto."
+            )
+            # Initialize templates in session state
+            if "wa_templates" not in st.session_state:
+                st.session_state["wa_templates"] = list(DEFAULT_TEMPLATES)
+
+            templates = st.session_state["wa_templates"]
+            updated_templates = []
+            for i, tpl in enumerate(templates):
+                val = st.text_area(f"Plantilla {i + 1}", value=tpl, height=80, key=f"wa_tpl_{i}")
+                updated_templates.append(val)
+
+            tc1, tc2 = st.columns(2)
+            if tc1.button("➕ Añadir plantilla", use_container_width=True, key="wa_add_tpl"):
+                st.session_state["wa_templates"].append("")
+                st.rerun()
+            if tc2.button("🗑️ Quitar última", use_container_width=True, key="wa_rm_tpl",
+                          disabled=len(templates) <= 1):
+                st.session_state["wa_templates"].pop()
+                st.rerun()
+
+            # Sync edits
+            st.session_state["wa_templates"] = [t for t in updated_templates if t.strip()]
+            if not st.session_state["wa_templates"]:
+                st.session_state["wa_templates"] = list(DEFAULT_TEMPLATES)
+
+        # ── Contact selection ──────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### Seleccionar contactos del CRM")
+
+        wa_crm = get_crm()
+        if wa_crm.empty:
+            st.info("El CRM está vacío. Añade contactos desde el Scraper primero.")
+        else:
+            # Filter to contacts with phone numbers
+            has_phone = wa_crm["telefono"].astype(str).str.strip().ne("")
+            wa_available = wa_crm[has_phone].copy()
+
+            if wa_available.empty:
+                st.warning("No hay contactos con teléfono en el CRM.")
+            else:
+                already_sent = get_whatsapp_sent_phones()
+                daily_count  = get_whatsapp_daily_count()
+
+                # Normalize phones and mark already sent
+                wa_available["_telefono_norm"] = wa_available["telefono"].apply(
+                    lambda p: normalize_phone(str(p))
+                )
+                wa_available["_ya_enviado"] = wa_available["_telefono_norm"].isin(already_sent)
+                wa_available["_tiene_wa"] = True  # Default, validated below
+
+                n_total  = len(wa_available)
+                n_sent   = wa_available["_ya_enviado"].sum()
+                n_new    = n_total - n_sent
+                n_remain = max(0, wa_max_daily - daily_count)
+
+                mc1, mc2, mc3, mc4 = st.columns(4)
+                mc1.metric("Con teléfono", n_total)
+                mc2.metric("Ya contactados", int(n_sent))
+                mc3.metric("Pendientes", int(n_new))
+                mc4.metric("Cuota hoy", f"{daily_count}/{wa_max_daily}")
+
+                # Filters
+                wf1, wf2 = st.columns(2)
+                wa_filter_tipo = wf1.selectbox(
+                    "Tipo vendedor", ["Todos"] + CRM_TIPOS_VENDEDOR, key="wa_f_tipo"
+                )
+                wa_filter_estado = wf2.multiselect(
+                    "Estado", CRM_ESTADOS, key="wa_f_estado", placeholder="Todos"
+                )
+                wa_skip_sent = st.checkbox("Excluir ya contactados por WhatsApp", value=True, key="wa_skip_sent")
+
+                # Apply filters
+                wa_mask = pd.Series(True, index=wa_available.index)
+                if wa_filter_tipo != "Todos":
+                    wa_mask &= wa_available["tipo_vendedor"] == wa_filter_tipo
+                if wa_filter_estado:
+                    wa_mask &= wa_available["estado"].isin(wa_filter_estado)
+                if wa_skip_sent:
+                    wa_mask &= ~wa_available["_ya_enviado"]
+
+                wa_selection = wa_available[wa_mask].copy()
+
+                if wa_selection.empty:
+                    st.info("No hay contactos que coincidan con los filtros.")
+                else:
+                    st.caption(f"{len(wa_selection):,} contactos seleccionados para enviar")
+                    st.dataframe(
+                        wa_selection[["nombre", "telefono", "titulo_vehiculo", "precio",
+                                      "tipo_vendedor", "estado", "_ya_enviado"]].rename(
+                            columns={"_ya_enviado": "Ya enviado"}
+                        ),
+                        use_container_width=True, height=300, hide_index=True,
+                    )
+
+                    # Preview one message
+                    with st.expander("Vista previa de mensaje"):
+                        sample = wa_selection.iloc[0].to_dict()
+                        sample_tpl = pick_template(st.session_state["wa_templates"])
+                        sample_msg = render_template(sample_tpl, sample)
+                        st.markdown(f"**Para:** {sample.get('telefono', '?')}")
+                        st.markdown(f"**Mensaje:**\n\n> {sample_msg}")
+
+                    # Validate numbers button
+                    if st.button("🔍 Verificar números en WhatsApp", use_container_width=True,
+                                 key="wa_validate"):
+                        phones_to_check = wa_selection["_telefono_norm"].dropna().tolist()
+                        phones_to_check = [p for p in phones_to_check if p]
+                        if phones_to_check:
+                            with st.spinner(f"Verificando {len(phones_to_check)} números…"):
+                                validation = check_whatsapp_numbers(phones_to_check)
+                            valid = sum(1 for v in validation.values() if v)
+                            invalid = len(validation) - valid
+                            st.info(f"Verificados: {valid} tienen WhatsApp, {invalid} no.")
+                            if invalid > 0:
+                                invalid_phones = {p for p, ok in validation.items() if not ok}
+                                wa_selection = wa_selection[~wa_selection["_telefono_norm"].isin(invalid_phones)]
+                                st.caption(f"Selección reducida a {len(wa_selection)} contactos con WhatsApp válido.")
+
+                    # ── Send button ────────────────────────────────────
+                    st.markdown("---")
+
+                    can_send = True
+                    if not conn_status["connected"]:
+                        st.error("No se puede enviar: WhatsApp desconectado.")
+                        can_send = False
+                    elif not is_within_hours(wa_hour_start, wa_hour_end):
+                        st.warning(f"Fuera de horario permitido ({wa_hour_start}:00–{wa_hour_end}:00). "
+                                   "Puedes cambiar el horario en los ajustes de arriba.")
+                        can_send = False
+                    elif daily_count >= wa_max_daily:
+                        st.warning(f"Límite diario alcanzado ({daily_count}/{wa_max_daily}).")
+                        can_send = False
+
+                    to_send_count = min(len(wa_selection), n_remain)
+                    est_time_min = (to_send_count * (wa_min_delay + wa_max_delay) / 2) / 60
+
+                    if can_send and to_send_count > 0:
+                        st.caption(
+                            f"Se enviarán hasta **{to_send_count}** mensajes. "
+                            f"Tiempo estimado: **~{est_time_min:.0f} min**. "
+                            f"Delay entre mensajes: {wa_min_delay}–{wa_max_delay}s."
+                        )
+
+                        if st.button(
+                            f"🚀 Enviar {to_send_count} mensajes",
+                            type="primary", use_container_width=True, key="wa_send_btn",
+                        ):
+                            contacts_to_send = wa_selection.head(to_send_count).to_dict("records")
+                            prog = st.progress(0.0)
+                            status_box = st.empty()
+                            log_container = st.container()
+
+                            def on_progress(current, total, info):
+                                prog.progress(current / total)
+                                status_box.info(f"Enviando {current}/{total} — {info}")
+
+                            def on_log(phone, message, success, error):
+                                log_whatsapp(
+                                    phone, message,
+                                    status="sent" if success else "failed",
+                                    error=error,
+                                )
+                                with log_container:
+                                    if success:
+                                        st.caption(f"✅ {phone}")
+                                    else:
+                                        st.caption(f"❌ {phone}: {error}")
+
+                            result = send_bulk(
+                                contacts=contacts_to_send,
+                                templates=st.session_state["wa_templates"],
+                                limits=limits,
+                                already_sent=already_sent,
+                                daily_count=daily_count,
+                                on_progress=on_progress,
+                                on_log=on_log,
+                            )
+
+                            prog.progress(1.0)
+                            status_box.empty()
+
+                            summary_parts = [f"**{result['sent']}** enviados"]
+                            if result["skipped"]:
+                                summary_parts.append(f"**{result['skipped']}** omitidos")
+                            if result["failed"]:
+                                summary_parts.append(f"**{result['failed']}** fallidos")
+                            if result["stopped_reason"]:
+                                summary_parts.append(f"Parado: {result['stopped_reason']}")
+
+                            st.success(" · ".join(summary_parts))
+
+        # ── Send log ───────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### Historial de envíos")
+        wa_log = get_whatsapp_log(200)
+        if wa_log:
+            log_df = pd.DataFrame(wa_log)
+            display_cols = ["created_at", "phone", "status", "error"]
+            display_cols = [c for c in display_cols if c in log_df.columns]
+            st.dataframe(
+                log_df[display_cols].rename(columns={
+                    "created_at": "Fecha", "phone": "Teléfono",
+                    "status": "Estado", "error": "Error",
+                }),
+                use_container_width=True, height=300, hide_index=True,
+            )
+        else:
+            st.info("No hay envíos registrados todavía.")
+
+# ─────────────────────────────────────────────
+# TAB 5 — NOTAS
 # ─────────────────────────────────────────────
 with tab_notas:
     st.markdown("### 📝 Notas")

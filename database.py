@@ -129,6 +129,16 @@ def init_db():
                 created_at        TEXT DEFAULT (datetime('now')),
                 updated_at        TEXT DEFAULT (datetime('now'))
             );
+
+            CREATE TABLE IF NOT EXISTS whatsapp_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone       TEXT NOT NULL,
+                message     TEXT NOT NULL,
+                crm_id      INTEGER,
+                status      TEXT DEFAULT 'sent',
+                error       TEXT DEFAULT '',
+                created_at  TEXT DEFAULT (datetime('now'))
+            );
         """)
         # Migration for existing databases that predate tipo_vendedor
         try:
@@ -366,3 +376,42 @@ def save_note(note_id: Optional[int], title: str, content: str) -> int:
 def delete_note(note_id: int):
     with _conn() as c:
         c.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+
+
+# ── WhatsApp log ──────────────────────────────────────────────────────────
+
+def log_whatsapp(phone: str, message: str, crm_id: Optional[int] = None,
+                 status: str = "sent", error: str = ""):
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO whatsapp_log (phone, message, crm_id, status, error) VALUES (?,?,?,?,?)",
+            (phone, message, crm_id, status, error),
+        )
+
+
+def get_whatsapp_daily_count() -> int:
+    """Count messages sent today."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS cnt FROM whatsapp_log WHERE status='sent' AND created_at LIKE ?",
+            (today + "%",),
+        ).fetchone()
+        return row[0] if row else 0
+
+
+def get_whatsapp_sent_phones() -> set:
+    """Get all phone numbers that have already been messaged."""
+    with _conn() as c:
+        cur = c.execute("SELECT DISTINCT phone FROM whatsapp_log WHERE status='sent'")
+        return {row[0] for row in cur.fetchall()}
+
+
+def get_whatsapp_log(limit: int = 100) -> list:
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT id, phone, message, crm_id, status, error, created_at "
+            "FROM whatsapp_log ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        return _to_dicts(cur)
