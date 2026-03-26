@@ -19,10 +19,12 @@ from database import (
     cleanup_old_scrapes,
     count_crm,
     count_scrapes,
+    db_backend,
     delete_note,
     delete_scrape,
     get_crm,
     get_note,
+    import_csv_to_crm,
     init_db,
     list_notes,
     list_scrapes,
@@ -294,6 +296,7 @@ with st.sidebar:
     mc1, mc2 = st.columns(2)
     mc1.metric("Historial", count_scrapes())
     mc2.metric("CRM", count_crm())
+    st.caption(f"💾 BD: {db_backend()}")
 
 # ══════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -688,11 +691,32 @@ with tab_crm:
             st.rerun()
 
     st.divider()
-    exp_buf = io.StringIO()
-    crm_df.to_csv(exp_buf, index=False, encoding="utf-8-sig")
-    st.download_button("⬇️ Exportar CRM CSV", data=exp_buf.getvalue(),
-                       file_name=f"crm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                       mime="text/csv")
+    ie1, ie2 = st.columns(2)
+    with ie1:
+        exp_buf = io.StringIO()
+        crm_df.to_csv(exp_buf, index=False, encoding="utf-8-sig")
+        st.download_button("⬇️ Exportar CRM CSV", data=exp_buf.getvalue(),
+                           file_name=f"crm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                           mime="text/csv", use_container_width=True)
+    with ie2:
+        csv_file = st.file_uploader("📂 Importar CSV al CRM", type=["csv"], key="crm_csv_upload",
+                                     label_visibility="collapsed")
+        if csv_file is not None:
+            try:
+                import_df = pd.read_csv(csv_file, dtype=str, keep_default_na=False)
+                with st.expander(f"Vista previa — {len(import_df)} filas, columnas: {', '.join(import_df.columns)}", expanded=True):
+                    st.dataframe(import_df.head(10), use_container_width=True, height=200)
+                    if st.button(f"✅ Importar {len(import_df):,} filas al CRM", type="primary",
+                                 use_container_width=True, key="confirm_csv_import"):
+                        n = import_csv_to_crm(import_df)
+                        if n > 0:
+                            st.success(f"✅ {n:,} contactos importados al CRM.")
+                            st.rerun()
+                        else:
+                            st.warning("No se encontraron columnas compatibles en el CSV. "
+                                       "Usa nombres como: nombre, telefono, email, precio, titulo, url, estado, notas…")
+            except Exception as e:
+                st.error(f"Error al leer CSV: {e}")
 
 # ─────────────────────────────────────────────
 # TAB 4 — NOTAS
