@@ -97,7 +97,7 @@ def check_connection() -> dict:
         r = requests.get(
             f"{_WA_URL}/instance/connectionState/{_WA_INSTANCE}",
             headers=_headers(),
-            timeout=10,
+            timeout=30,
         )
         data = r.json()
         state = (data.get("instance") or {}).get("state", data.get("state", "unknown"))
@@ -118,7 +118,7 @@ def check_whatsapp_numbers(phones: list[str]) -> dict[str, bool]:
             f"{_WA_URL}/chat/whatsappNumbers/{_WA_INSTANCE}",
             headers=_headers(),
             json={"numbers": phones},
-            timeout=15,
+            timeout=60,
         )
         results = r.json()
         if isinstance(results, list):
@@ -145,32 +145,39 @@ def send_presence(phone: str, delay_ms: int = 3000) -> bool:
                     "number": phone,
                 },
             },
-            timeout=10,
+            timeout=30,
         )
         return True
     except Exception:
         return False
 
 
-def send_text(phone: str, message: str, delay_ms: int = 0) -> dict:
-    """Send a text message via Evolution API."""
+def send_text(phone: str, message: str, delay_ms: int = 0, retries: int = 2) -> dict:
+    """Send a text message via Evolution API with retry on timeout."""
     if not WA_CONFIGURED:
         return {"success": False, "error": "WhatsApp no configurado"}
-    try:
-        body: dict = {"number": phone, "text": message}
-        if delay_ms > 0:
-            body["delay"] = delay_ms
-        r = requests.post(
-            f"{_WA_URL}/message/sendText/{_WA_INSTANCE}",
-            headers=_headers(),
-            json=body,
-            timeout=20,
-        )
-        data = r.json()
-        success = r.status_code in (200, 201)
-        return {"success": success, "data": data, "status_code": r.status_code}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    body: dict = {"number": phone, "text": message}
+    if delay_ms > 0:
+        body["delay"] = delay_ms
+    last_err = ""
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.post(
+                f"{_WA_URL}/message/sendText/{_WA_INSTANCE}",
+                headers=_headers(),
+                json=body,
+                timeout=60,
+            )
+            data = r.json()
+            success = r.status_code in (200, 201)
+            return {"success": success, "data": data, "status_code": r.status_code}
+        except requests.exceptions.Timeout:
+            last_err = f"Timeout (intento {attempt}/{retries})"
+            logger.warning("send_text timeout attempt %d/%d for %s", attempt, retries, phone)
+            time.sleep(5)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    return {"success": False, "error": last_err}
 
 
 # ── Template engine ───────────────────────────────────────────────────────
