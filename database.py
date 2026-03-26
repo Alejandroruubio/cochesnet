@@ -3,10 +3,12 @@ database.py — Persistence layer for scrape history, CRM contacts and notes.
 
 Supports two backends:
   • Local SQLite  (default, for development)
-  • Turso cloud   (when [turso] credentials exist in st.secrets)
+  • Turso cloud   (when [turso] credentials exist in st.secrets — via HTTP API,
+                   no native extension needed, works on any Python version)
 """
 from __future__ import annotations
 
+import base64
 import gzip
 import logging
 import sqlite3
@@ -16,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+import requests as _http
 import streamlit as st
 
 logger = logging.getLogger(__name__)
@@ -25,18 +28,11 @@ logger = logging.getLogger(__name__)
 try:
     _TURSO_URL: str = st.secrets["turso"]["database_url"]
     _TURSO_TOKEN: str = st.secrets["turso"]["auth_token"]
-    _USE_TURSO = bool(_TURSO_URL)
+    _USE_TURSO = bool(_TURSO_URL and _TURSO_TOKEN)
 except Exception:
     _TURSO_URL = ""
     _TURSO_TOKEN = ""
     _USE_TURSO = False
-
-if _USE_TURSO:
-    try:
-        import libsql_experimental as libsql  # type: ignore
-    except ImportError:
-        logger.warning("libsql_experimental not installed — falling back to local SQLite")
-        _USE_TURSO = False
 
 DB_PATH = Path(__file__).parent / "cochesnet.db"
 
@@ -57,17 +53,139 @@ CRM_ESTADOS = [
 CRM_TIPOS_VENDEDOR = ["Desconocido", "Particular", "Profesional"]
 
 
-# ── Connection ────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════
+# Turso HTTP Pipeline API — lightweight sqlite3-compatible adapter
+# Uses only `requests`, works on any Python version (no native extensions)
+# ══════════════════════════════════════════════════════════════════════════
+
+class _TursoCursor:
+    """Minimal cursor-like object returned by TursoConnection.execute()."""
+
+    def __init__(self, result: dict):
+        self._result = result or {}
+        self._rows = self._decode_rows()
+        self._pos = 0
+
+    @property
+    def description(self):
+        cols = self._result.get("cols")
+        if not cols:
+            return None
+        return [(c["name"],) + (None,) * 6 for c in cols]
+
+    @property
+    def lastrowid(self):
+        rid = self._result.get("last_insert_rowid")
+        return int(rid) if rid is not None else None
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        if self._pos < len(self._rows):
+            row = self._rows[self._pos]
+            self._pos += 1
+            return row
+        return None
+
+    def _decode_rows(self):
+        return [tuple(self._decode_val(cell) for cell in row)
+                for row in self._result.get("rows", [])]
+
+    @staticmethod
+    def _decode_val(cell):
+        if not isinstance(cell, dict):
+            return cell
+        t = cell.get("type", "text")
+        v = cell.get("value")
+        if t == "null" or v is None:
+            return None
+        if t == "integer":
+            return int(v)
+        if t == "float":
+            return float(v)
+        if t == "blob":
+            return base64.b64decode(cell.get("base64", ""))
+        return str(v)
+
+
+class _TursoConnection:
+    """sqlite3.Connection-compatible wrapper over Turso HTTP Pipeline API."""
+
+    def __init__(self, url: str, token: str):
+        # libsql://db-org.turso.io → https://db-org.turso.io
+        self._api = url.replace("libsql://", "https://").rstrip("/") + "/v2/pipeline"
+        self._headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    # ── Context manager (matches sqlite3 behaviour) ───────────────────
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False  # don't suppress exceptions
+
+    # ── Query execution ───────────────────────────────────────────────
+    def execute(self, sql: str, params=None) -> _TursoCursor:
+        stmt: dict = {"sql": sql}
+        if params:
+            stmt["args"] = [self._encode(p) for p in params]
+        results = self._send([{"type": "execute", "stmt": stmt}])
+        return _TursoCursor(results[0] if results else {})
+
+    def executescript(self, script: str):
+        stmts = [s.strip() for s in script.split(";") if s.strip()]
+        batch = [{"type": "execute", "stmt": {"sql": s}} for s in stmts]
+        self._send(batch)
+
+    def commit(self):
+        pass  # HTTP API auto-commits each request
+
+    # ── Param encoding ────────────────────────────────────────────────
+    @staticmethod
+    def _encode(val):
+        if val is None:
+            return {"type": "null", "value": None}
+        if isinstance(val, bool):
+            return {"type": "integer", "value": str(int(val))}
+        if isinstance(val, int):
+            return {"type": "integer", "value": str(val)}
+        if isinstance(val, float):
+            return {"type": "float", "value": val}
+        if isinstance(val, bytes):
+            return {"type": "blob", "base64": base64.b64encode(val).decode()}
+        return {"type": "text", "value": str(val)}
+
+    # ── HTTP transport ────────────────────────────────────────────────
+    def _send(self, stmts: list) -> list:
+        body = {"requests": stmts + [{"type": "close"}]}
+        r = _http.post(self._api, headers=self._headers, json=body, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        out = []
+        for item in data.get("results", []):
+            if item.get("type") == "ok":
+                resp = item.get("response", {})
+                if resp.get("type") == "execute":
+                    out.append(resp.get("result", {}))
+            elif item.get("type") == "error":
+                err = item.get("error", {})
+                logger.error("Turso error: %s", err.get("message", err))
+        return out
+
+
+# ── Connection factory ────────────────────────────────────────────────────
 
 def _conn():
     if _USE_TURSO:
-        return libsql.connect(database=_TURSO_URL, auth_token=_TURSO_TOKEN)
-    c = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    return c
+        return _TursoConnection(_TURSO_URL, _TURSO_TOKEN)
+    return sqlite3.connect(str(DB_PATH), check_same_thread=False)
 
 
 def _to_dicts(cursor) -> list[dict]:
-    """Convert cursor results to list of dicts (works with both sqlite3 and libsql)."""
+    """Convert cursor results to list of dicts (works with sqlite3 and Turso)."""
     if cursor.description is None:
         return []
     cols = [d[0] for d in cursor.description]
