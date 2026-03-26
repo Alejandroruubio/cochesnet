@@ -39,9 +39,43 @@ except Exception:
 # ── Default templates ─────────────────────────────────────────────────────
 
 DEFAULT_TEMPLATES = [
-    "Hola, buenos días. He visto tu anuncio del {titulo} a {precio} en coches.net y me interesa bastante. ¿Sigue disponible?",
-    "Buenas tardes, estoy interesado en el {titulo} que tienes publicado por {precio}. ¿Podríamos hablar sobre él? Un saludo.",
-    "Hola! He visto tu {titulo} en coches.net ({precio}) y me gustaría saber más detalles. ¿Está aún a la venta? Gracias.",
+    (
+        "Hola! Que tal estas?\n\n"
+        "He visto que estas vendiendo tu coche en Coches.net y queria "
+        "comentarte algo que puede ayudarte a venderlo mas rapido y "
+        "al mejor precio.\n\n"
+        "Me llamo Alejandro y soy parte del equipo de SubeTuCoche, una "
+        "agencia especializada en dar maxima visibilidad a coches de "
+        "particulares como el tuyo, usando estrategias modernas que "
+        "estan funcionando muy bien.\n\n"
+        "Que hacemos diferente?\n"
+        "Creamos contenido que genera engage en las redes sociales "
+        "mas actuales y potenciadoras.\n"
+        "Te ayudamos a conectar con interesados mas rapido, incluso "
+        "ofrecemos ayuda en toda la gestion de la venta.\n\n"
+        "Nuestro objetivo es que tu coche resalte entre todos los demas "
+        "y se venda mas rapido y sin bajarte el precio.\n\n"
+        "Te gustaria que te contara como podriamos hacerlo con el tuyo?\n"
+        "Es sin compromiso y te sorprendera lo que podemos hacer!"
+    ),
+    (
+        "Hola! Vi tu coche en Coches.net\n\n"
+        "Soy Alejandro de SubeTuCoche. Ayudamos a particulares a vender "
+        "mas rapido publicando su coche en redes sociales y gestionando "
+        "todo el proceso de venta.\n\n"
+        "Sin bajarte el precio y sin complicaciones.\n\n"
+        "Te cuento como lo hariamos con el tuyo? Es sin compromiso"
+    ),
+    (
+        "Hola! Sigues con el coche a la venta?\n\n"
+        "Te escribo porque vi tu anuncio en Coches.net y queria "
+        "comentarte algo.\n\n"
+        "Soy Alejandro de SubeTuCoche. Lo que hacemos es sencillo: "
+        "damos a tu coche la visibilidad que los portales normales "
+        "no dan, usando redes sociales y conectandote directamente "
+        "con compradores serios.\n\n"
+        "Te interesa que te explique como? Sin compromiso ninguno"
+    ),
 ]
 
 # ── Safety defaults ───────────────────────────────────────────────────────
