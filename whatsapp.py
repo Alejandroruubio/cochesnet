@@ -82,7 +82,11 @@ def normalize_phone(phone: str, country_code: str = "34") -> str:
 # ── API calls ─────────────────────────────────────────────────────────────
 
 def _headers() -> dict:
-    return {"apikey": _WA_KEY, "Content-Type": "application/json"}
+    return {
+        "apikey": _WA_KEY,
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",  # bypass ngrok interstitial
+    }
 
 
 def check_connection() -> dict:
@@ -92,12 +96,13 @@ def check_connection() -> dict:
     try:
         r = requests.get(
             f"{_WA_URL}/instance/connectionState/{_WA_INSTANCE}",
-            headers={"apikey": _WA_KEY},
+            headers=_headers(),
             timeout=10,
         )
         data = r.json()
         state = (data.get("instance") or {}).get("state", data.get("state", "unknown"))
-        return {"connected": state == "open", "state": state, "data": data}
+        connected = state in ("open", "connected", "connecting")
+        return {"connected": connected, "state": state, "data": data}
     except Exception as e:
         return {"connected": False, "error": str(e)}
 
